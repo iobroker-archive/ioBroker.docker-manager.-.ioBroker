@@ -1,0 +1,68 @@
+{
+  "name": "iobroker.docker-mamanger",
+  "version": "0.0.1",
+  "description": "Pull, delete, start, stop and manage Docker containers directly from ioBroker",
+  "author": {
+    "name": "Denis Haev",
+    "email": "dogafox@gmail.com"
+  },
+  "contributors": [
+  ],
+  "homepage": "https://github.com/ioBroker/ioBroker.docker-manager",
+  "keywords": [
+    "ioBroker",
+    "docker",
+      "manager"
+  ],
+  "engines": {
+    "node": ">=20"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/ioBroker/ioBroker.docker-manager"
+  },
+  "dependencies": {
+    "@iobroker/adapter-core": "^3.3.1"
+  },
+  "devDependencies": {
+    "@alcalzone/release-script": "^3.8.0",
+    "@alcalzone/release-script-plugin-iobroker": "^3.7.2",
+    "@alcalzone/release-script-plugin-license": "^3.7.0",
+    "@iobroker/build-tools": "^2.0.15",
+    "@iobroker/eslint-config": "^2.0.2",
+    "@iobroker/legacy-testing": "^2.0.2",
+    "@iobroker/testing": "^5.0.4",
+    "@iobroker/types": "^7.0.7",
+    "@types/node": "^24.1.0",
+    "typescript": "~5.9.2"
+  },
+  "bugs": {
+    "url": "https://github.com/ioBroker/ioBroker.docker-manager/issues"
+  },
+  "main": "build/main.js",
+  "files": [
+    "admin/",
+    "io-package.json",
+    "LICENSE",
+    "build/"
+  ],
+  "scripts": {
+    "test": "mocha --exit",
+    "prepublishOnly": "npm run build",
+    "npm": "npm i && cd src-admin && npm i",
+    "lint": "eslint -c eslint.config.mjs",
+    "lint-frontend": "cd src-admin && eslint -c eslint.config.mjs",
+    "build": "npm run build:ts && npm run build:gui",
+    "build:gui": "node tasks.js --build",
+    "build:ts": "tsc -p tsconfig.build.json && node tasks.js --copy-i18n",
+    "release": "release-script",
+    "update-packages": "npx -y npm-check-updates --upgrade && cd src-admin && npx -y npm-check-updates --upgrade",
+    "0-clean": "node tasks.js --0-clean",
+    "1-npm": "node tasks.js --1-npm",
+    "2-build": "node tasks.js --2-build",
+    "3-copy": "node tasks.js --3-copy",
+    "4-patch": "node tasks.js --4-patch"
+  },
+  "license": "MIT",
+  "readmeFilename": "README.md"
+}
