@@ -1,5 +1,5 @@
 {
-  "name": "iobroker.docker-mamanger",
+  "name": "iobroker.docker-manager",
   "version": "0.0.1",
   "description": "Pull, delete, start, stop and manage Docker containers directly from ioBroker",
   "author": {

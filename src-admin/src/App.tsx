@@ -1,14 +1,18 @@
 import { StyledEngineProvider, ThemeProvider } from '@mui/material/styles';
 import React from 'react';
 
-import { AppBar } from '@mui/material';
+import { AppBar, Tooltip, Tabs, Tab } from '@mui/material';
+import { SignalCellularOff as IconNotAlive } from '@mui/icons-material';
+import { IconButton as IconButton76 } from '@foxriver76/iob-component-lib';
 
 import {
     AdminConnection,
     GenericApp,
+    I18n,
     Loader,
     type GenericAppProps,
     type GenericAppState,
+    type IobTheme,
 } from '@iobroker/adapter-react-v5';
 
 import enLang from './i18n/en.json';
@@ -22,20 +26,42 @@ import esLang from './i18n/es.json';
 import plLang from './i18n/pl.json';
 import ukLang from './i18n/uk.json';
 import zhCnLang from './i18n/zh-cn.json';
-import type { GUIMessage } from './types';
+import type { ContainerInfo, DiskUsage, DockerContainerInspect, GUIResponse, ImageInfo } from './types';
 
-const styles: { [styleName: string]: React.CSSProperties } = {
+const styles: { [styleName: string]: any } = {
     tabContent: {
         padding: 10,
         overflow: 'auto',
         height: 'calc(100% - 64px - 48px - 20px)',
     },
+    tabContentNoSave: {
+        padding: 10,
+        height: 'calc(100% - 48px - 20px)',
+        overflow: 'auto',
+    },
+    selected: (theme: IobTheme): React.CSSProperties => ({
+        color: theme.palette.mode === 'dark' ? undefined : '#FFF !important',
+    }),
+    indicator: (theme: IobTheme): React.CSSProperties => ({
+        backgroundColor: theme.palette.mode === 'dark' ? theme.palette.secondary.main : '#FFF',
+    }),
 };
 
+import InfoTab from './Tabs/Info';
+import ImagesTab from './Tabs/Images';
+import ContainersTab from './Tabs/Containers';
+
 interface AppState extends GenericAppState {
+    selectedTab: 'info' | 'images' | 'containers';
     ready: boolean;
     alive: boolean;
     backendRunning: boolean;
+    info?: DiskUsage;
+    version?: string;
+    error?: string;
+    containers?: ContainerInfo[];
+    images?: ImageInfo[];
+    container: { [id: string]: DockerContainerInspect };
 }
 
 export default class App extends GenericApp<GenericAppProps, AppState> {
@@ -77,6 +103,7 @@ export default class App extends GenericApp<GenericAppProps, AppState> {
             ...this.state,
             alive: false,
             backendRunning: false,
+            container: {},
         };
 
         this.alert = window.alert;
@@ -140,17 +167,19 @@ export default class App extends GenericApp<GenericAppProps, AppState> {
         }
 
         void this.socket
-            .subscribeOnInstance(`matter.${this.instance}`, 'gui', null, this.onBackendUpdates)
+            .subscribeOnInstance(`docker-manager.${this.instance}`, this.state.selectedTab, null, this.onBackendUpdates)
             .then(this.onSubscribeToBackEndSubmitted)
             .catch(this.onSubscribeToBackEndFailed);
     }
 
     async onConnectionReady(): Promise<void> {
         this.socket
-            .subscribeState(`system.adapter.matter.${this.instance}.alive`, this.onAlive)
-            .catch(e => this.showError(`Cannot subscribe on system.adapter.matter.${this.instance}.alive: ${e}`));
+            .subscribeState(`system.adapter.docker-manager.${this.instance}.alive`, this.onAlive)
+            .catch(e =>
+                this.showError(`Cannot subscribe on system.adapter.docker-manager.${this.instance}.alive: ${e}`),
+            );
 
-        const alive = await this.socket.getState(`system.adapter.matter.${this.instance}.alive`);
+        const alive = await this.socket.getState(`system.adapter.docker-manager.${this.instance}.alive`);
 
         if (alive?.val) {
             this.refreshBackendSubscription(true);
@@ -175,9 +204,12 @@ export default class App extends GenericApp<GenericAppProps, AppState> {
         }
     };
 
-    onBackendUpdates = (update: GUIMessage | null): void => {
+    onBackendUpdates = (update: GUIResponse | null): void => {
         if (!update) {
             return;
+        }
+        if (update.command === 'info') {
+            this.setState({ info: update.data, version: update.version || 'unknown' });
         }
     };
 
@@ -196,12 +228,49 @@ export default class App extends GenericApp<GenericAppProps, AppState> {
 
         try {
             this.socket.unsubscribeState(`system.adapter.docker-manager.${this.instance}.alive`, this.onAlive);
-            await this.socket.unsubscribeFromInstance(`docker-manager.${this.instance}`, 'gui', this.onBackendUpdates);
+            await this.socket.unsubscribeFromInstance(`docker-manager.${this.instance}`, 'all', this.onBackendUpdates);
         } catch {
             // ignore
         }
 
         super.componentWillUnmount();
+    }
+
+    renderInfoTab(): React.ReactNode {
+        return (
+            <InfoTab
+                alive={this.state.alive}
+                socket={this.socket}
+                instance={this.instance}
+                info={this.state.info}
+                version={this.state.version}
+            />
+        );
+    }
+
+    renderImagesTab(): React.ReactNode {
+        return (
+            <ImagesTab
+                alive={this.state.alive}
+                socket={this.socket}
+                instance={this.instance}
+                images={this.state.images}
+                containers={this.state.containers}
+            />
+        );
+    }
+
+    renderContainersTab(): React.ReactNode {
+        return (
+            <ContainersTab
+                alive={this.state.alive}
+                socket={this.socket}
+                instance={this.instance}
+                images={this.state.images}
+                containers={this.state.containers}
+                container={this.state.container}
+            />
+        );
     }
 
     render(): React.JSX.Element {
@@ -226,13 +295,77 @@ export default class App extends GenericApp<GenericAppProps, AppState> {
                             color: this.state.theme.palette.text.primary,
                         }}
                     >
-                        <AppBar position="static"></AppBar>
+                        <AppBar position="static">
+                            <Tabs
+                                value={this.state.selectedTab || 'info'}
+                                onChange={(_e, value) => {
+                                    this.setState({ selectedTab: value }, () => this.refreshBackendSubscription());
 
-                        <div
-                            style={this.state.selectedTab === 'options' ? styles.tabContent : styles.tabContentNoSave}
-                        ></div>
+                                    window.localStorage.setItem(
+                                        `${this.adapterName}.${this.instance}.selectedTab`,
+                                        value,
+                                    );
+                                }}
+                                scrollButtons="auto"
+                                sx={{ '& .MuiTabs-indicator': styles.indicator }}
+                            >
+                                <Tab
+                                    sx={{ '&.Mui-selected': styles.selected }}
+                                    label={I18n.t('General')}
+                                    value="info"
+                                />
+                                <Tab
+                                    sx={{ '&.Mui-selected': styles.selected }}
+                                    label={I18n.t('Images')}
+                                    value="images"
+                                />
+                                <Tab
+                                    sx={{ '&.Mui-selected': styles.selected }}
+                                    label={I18n.t('Containers')}
+                                    value="containers"
+                                />
+                                <div style={{ flexGrow: 1 }} />
+                                {this.state.alive ? null : (
+                                    <Tooltip
+                                        title={I18n.t('Instance is not alive')}
+                                        slotProps={{ popper: { sx: { pointerEvents: 'none' } } }}
+                                    >
+                                        <IconNotAlive style={{ color: 'orange', padding: 12 }} />
+                                    </Tooltip>
+                                )}
+                                {this.state.backendRunning ? null : (
+                                    <Tooltip
+                                        title={I18n.t('Reconnect to backend')}
+                                        slotProps={{ popper: { sx: { pointerEvents: 'none' } } }}
+                                    >
+                                        <div
+                                            style={{
+                                                width: 48,
+                                                height: 48,
+                                                display: 'flex',
+                                                alignItems: 'center',
+                                                justifyContent: 'center',
+                                            }}
+                                        >
+                                            <IconButton76
+                                                iconColor="warning"
+                                                noBackground
+                                                icon="noConnection"
+                                                onClick={() => this.refreshBackendSubscription()}
+                                            />
+                                        </div>
+                                    </Tooltip>
+                                )}
+                            </Tabs>
+                        </AppBar>
+
+                        <div style={this.state.selectedTab === 'info' ? styles.tabContent : styles.tabContentNoSave}>
+                            {this.state.selectedTab === 'info' && this.renderInfoTab()}
+                            {this.state.selectedTab === 'images' && this.renderImagesTab()}
+                            {this.state.selectedTab === 'containers' && this.renderContainersTab()}
+                        </div>
                         {this.renderError()}
-                        {this.state.selectedTab === 'options' ? this.renderSaveCloseButtons() : null}
+                        {this.state.selectedTab === 'containers' ? this.renderSaveCloseButtons() : null}
                     </div>
                 </ThemeProvider>
             </StyledEngineProvider>

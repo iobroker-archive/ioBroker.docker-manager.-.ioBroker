@@ -1,13 +1,22 @@
 import { type AdapterOptions, Adapter } from '@iobroker/adapter-core';
+import type { DockerManagerAdapterConfig, GUIResponse } from './types';
+
+import DockerCommands from './lib/DockerCommands';
 
 export class DockerManagerAdapter extends Adapter {
-    #_guiSubscribes: { clientId: string; ts: number }[] | null = null;
+    declare config: DockerManagerAdapterConfig;
+
+    #dockerCommands: DockerCommands | undefined;
+
+    #_guiSubscribes:
+        | { clientId: string; ts: number; type: 'info' | 'images' | 'containers' | 'container'; container?: string }[]
+        | null = null;
 
     public constructor(options: Partial<AdapterOptions> = {}) {
         super({
             ...options,
             name: 'docker-manager',
-            uiClientSubscribe: data => this.onClientSubscribe(data.clientId),
+            uiClientSubscribe: data => this.onClientSubscribe(data.clientId, data.message),
             uiClientUnsubscribe: data => {
                 const { clientId, reason } = data;
                 if (reason === 'client') {
@@ -23,8 +32,38 @@ export class DockerManagerAdapter extends Adapter {
         this.on('message', this.#onMessage.bind(this));
     }
 
-    onClientSubscribe(clientId: string): { error?: string; accepted: boolean; heartbeat?: number } {
-        this.log.debug(`Subscribe from ${clientId}`);
+    scanRequests(): void {
+        const scans: {
+            images: number;
+            containers: number;
+            info: number;
+            container: string[];
+        } = {
+            images: 0,
+            containers: 0,
+            info: 0,
+            container: [],
+        };
+        this.#_guiSubscribes?.forEach(it => {
+            if (it.type === 'images') {
+                scans.images++;
+            } else if (it.type === 'containers') {
+                scans.containers++;
+            } else if (it.type === 'container') {
+                scans.container.push(it.container!);
+            } else if (it.type === 'info') {
+                scans.info++;
+            }
+        });
+
+        this.#dockerCommands?.updatePolling(scans);
+    }
+
+    onClientSubscribe(
+        clientId: string,
+        message: ioBroker.Message,
+    ): { error?: string; accepted: boolean; heartbeat?: number } {
+        this.log.debug(`Subscribe from ${clientId}: ${JSON.stringify(message)}`);
         if (!this.#_guiSubscribes) {
             return { error: `Adapter is still initializing`, accepted: false };
         }
@@ -37,9 +76,22 @@ export class DockerManagerAdapter extends Adapter {
         // inform GUI that subscription is started
         const sub = this.#_guiSubscribes.find(s => s.clientId === clientId);
         if (!sub) {
-            this.#_guiSubscribes.push({ clientId, ts: Date.now() });
+            this.#_guiSubscribes.push({
+                clientId,
+                ts: Date.now(),
+                type: message.message.type as 'info' | 'images' | 'containers' | 'container',
+                container: message.message.container,
+            });
+            this.scanRequests();
         } else {
             sub.ts = Date.now();
+            if (
+                sub.type !== (message.message.type as 'info' | 'images' | 'containers' | 'container') ||
+                sub.container !== message.message.container
+            ) {
+                sub.type = message.message.type as 'info' | 'images' | 'containers' | 'container';
+                this.scanRequests();
+            }
         }
 
         return { accepted: true, heartbeat: 120000 };
@@ -59,9 +111,10 @@ export class DockerManagerAdapter extends Adapter {
                 this.#_guiSubscribes.splice(pos, 1);
             }
         } while (deleted);
+        this.scanRequests();
     }
 
-    sendToGui = async (data: any): Promise<void> => {
+    sendToGui = async (data: GUIResponse): Promise<void> => {
         if (!this.#_guiSubscribes) {
             return;
         }
@@ -69,17 +122,28 @@ export class DockerManagerAdapter extends Adapter {
             this.log.debug(`Send to GUI: ${JSON.stringify(data)}`);
 
             for (let i = 0; i < this.#_guiSubscribes.length; i++) {
-                await this.sendToUI({ clientId: this.#_guiSubscribes[i].clientId, data });
+                if (
+                    data.command === 'container' &&
+                    data.command === this.#_guiSubscribes[i].type &&
+                    data.container === this.#_guiSubscribes[i].container
+                ) {
+                    await this.sendToUI({ clientId: this.#_guiSubscribes[i].clientId, data });
+                } else if (data.command === this.#_guiSubscribes[i].type && data.command !== 'container') {
+                    await this.sendToUI({ clientId: this.#_guiSubscribes[i].clientId, data });
+                }
             }
         }
     };
 
     #onReady(): void {
         this.log.info(`Adapter matter-controller started`);
+        this.#dockerCommands = new DockerCommands(this);
     }
 
     async #onUnload(callback: () => void): Promise<void> {
         try {
+            this.#dockerCommands?.destroy();
+            this.#dockerCommands = undefined;
             // inform GUI about stop
             await this.sendToGui({ command: 'stopped' });
         } catch {
@@ -89,10 +153,47 @@ export class DockerManagerAdapter extends Adapter {
         callback();
     }
 
-    #onMessage(obj: ioBroker.Message): void {
+    async #onMessage(obj: ioBroker.Message): Promise<void> {
         if (obj.command?.startsWith('dm:')) {
             // Handled by Device Manager class itself, so ignored here
             return;
+        }
+
+        switch (obj.command) {
+            case 'image:pull':
+                await this.#dockerCommands?.imagePull(obj.message.image);
+                break;
+            case 'image:remove':
+                await this.#dockerCommands?.imageRemove(obj.message.image);
+                break;
+            case 'image:run':
+                await this.#dockerCommands?.imageRun(obj.message.image, obj.message);
+                break;
+            case 'container:stop':
+                await this.#dockerCommands?.containerStop(obj.message.id);
+                break;
+            case 'container:start':
+                await this.#dockerCommands?.containerStart(obj.message.id);
+                break;
+            case 'container:restart':
+                await this.#dockerCommands?.containerRestart(obj.message.id);
+                break;
+            case 'container:remove':
+                await this.#dockerCommands?.containerRemove(obj.message.id);
+                break;
+            case 'container:exec': {
+                const result = await this.#dockerCommands?.containerExec(obj.message.id, obj.message.cmd);
+                this.sendTo(obj.from, obj.command, { result }, obj.callback);
+                break;
+            }
+            case 'container:logs': {
+                const logs = await this.#dockerCommands?.containerLogs(obj.message.id);
+                this.sendTo(obj.from, obj.command, { logs }, obj.callback);
+                break;
+            }
+            default:
+                this.log.warn(`Unknown command: ${obj.command}`);
+                break;
         }
 
         this.log.debug(`Handle message ${obj.command} ${obj.command !== 'getLicense' ? JSON.stringify(obj) : ''}`);

@@ -620,20 +620,3 @@ export type GUIResponse =
     | GUIResponseImages
     | GUIResponseContainer
     | { command: 'stopped' };
-
-export type GUIRequestInfo = {
-    type: 'info';
-};
-
-export type GUIRequestImages = {
-    type: 'images';
-};
-export type GUIRequestContainers = {
-    type: 'containers';
-};
-export type GUIRequestContainer = {
-    type: 'containers';
-    container: string;
-};
-
-export type GUIRequest = GUIRequestInfo | GUIRequestImages | GUIRequestContainers | GUIRequestContainer;
