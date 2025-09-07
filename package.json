@@ -1,13 +1,12 @@
 {
   "name": "iobroker.docker-manager",
-  "version": "0.0.1",
+  "version": "0.0.2",
   "description": "Pull, delete, start, stop and manage Docker containers directly from ioBroker",
   "author": {
     "name": "Denis Haev",
     "email": "dogafox@gmail.com"
   },
-  "contributors": [
-  ],
+  "contributors": [],
   "homepage": "https://github.com/ioBroker/ioBroker.docker-manager",
   "keywords": [
     "ioBroker",

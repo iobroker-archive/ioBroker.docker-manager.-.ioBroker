@@ -1,21 +1,34 @@
 {
   "common": {
     "name": "docker-manager",
-    "version": "0.0.1",
-    "news": {},
+    "version": "0.0.2",
+    "news": {
+      "0.0.2": {
+        "en": "Initial commit",
+        "de": "Ursprüngliche Verpflichtung",
+        "ru": "Первоначальное обязательство",
+        "pt": "Commit inicial",
+        "nl": "Eerste commit",
+        "fr": "Engagement initial",
+        "it": "Impegno iniziale",
+        "es": "Composición inicial",
+        "pl": "Początkowe zobowiązanie",
+        "uk": "Початкова комісія",
+        "zh-cn": "初步承诺"
+      }
+    },
     "titleLang": {
       "en": "Docker mananer",
-        "de": "Docker-Manager",
-
-        "ru": "Docker-менеджер",
-        "pt": "Gerenciador de Docker",
-        "nl": "Docker-manager",
-        "fr": "Gestionnaire de Docker",
-        "it": "Gestore di Docker",
-        "es": "Administrador de Docker",
-        "pl": "Menedżer Dockera",
-        "uk": "Менеджер Docker",
-        "zh-cn": "Docker 管理器"
+      "de": "Docker-Manager",
+      "ru": "Docker-менеджер",
+      "pt": "Gerenciador de Docker",
+      "nl": "Docker-manager",
+      "fr": "Gestionnaire de Docker",
+      "it": "Gestore di Docker",
+      "es": "Administrador de Docker",
+      "pl": "Menedżer Dockera",
+      "uk": "Менеджер Docker",
+      "zh-cn": "Docker 管理器"
     },
     "desc": {
       "en": "Controlling and simulation of docker-manager devices",
@@ -77,8 +90,7 @@
       }
     ]
   },
-  "native": {
-  },
+  "native": {},
   "objects": [],
   "instanceObjects": []
 }
