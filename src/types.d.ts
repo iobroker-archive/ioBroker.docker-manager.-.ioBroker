@@ -1,5 +1,3 @@
-import type { DockerManagerAdapter } from './main';
-
 export type DockerContainerInspect = {
     Id: string;
     Created: string;
@@ -251,9 +249,9 @@ export type LogDriver =
 
 export interface PortBinding {
     /** Container port (required) */
-    containerPort: number;
+    containerPort: number | string;
     /** Host port (optional for publishAllPorts) */
-    hostPort?: number;
+    hostPort?: number | string;
     /** Host IP (e.g. 127.0.0.1) */
     hostIP?: string;
     protocol?: Protocol; // default tcp
@@ -368,8 +366,6 @@ export interface Security {
     /** --cap-add / --cap-drop */
     capAdd?: string[];
     capDrop?: string[];
-    /** --security-opt (apparmor=..., seccomp=..., no-new-privileges, label:...) */
-    securityOpt?: string[];
     /** user namespace: --userns */
     usernsMode?: string; // e.g. "host", "private"
     /** --ipc / --pid */
@@ -380,7 +376,8 @@ export interface Security {
     /** seccomp profile path or "unconfined" */
     seccomp?: string;
     /** apparmor profile */
-    apparmor?: string;
+    // eslint-disable-next-line @typescript-eslint/no-redundant-type-constituents
+    apparmor?: 'unconfined' | 'docker-default' | string;
     /** device cgroup rules */
     deviceCgroupRules?: string[]; // e.g. "c 189:* rmw"
     /** extra groups inside container */
@@ -446,9 +443,13 @@ export interface HostMapping {
 
 // The master container configuration you can use in your manager:
 export interface ContainerConfig {
-    enabled?: boolean;
+    /** If false, container is not started, but still visible in the list */
+    enabled?: boolean; // ioBroker setting
 
-    /** Image reference (repo:tag or ID). If omitted and build is set, image comes from build */
+    /** If true, container is stopped when adapter unloads */
+    stopOnUnload?: boolean; // ioBroker setting
+
+    /** Image reference (repo:tag or ID). If omitted and build is set, the image comes from build */
     image: string;
 
     /** Compose-style build (optional) */
@@ -486,6 +487,7 @@ export interface ContainerConfig {
 
     /** Detach & Auto-remove */
     detach?: boolean; // -d
+    // If true, container is removed after exit (cannot be used with restart policies)
     removeOnExit?: boolean; // --rm
 
     /** Ports */
@@ -556,7 +558,7 @@ export interface ContainerConfig {
 }
 
 export interface DockerManagerAdapterConfig {
-    containers: ContainerConfig[];
+    containers?: ContainerConfig[];
 }
 
 export type SizeInfo = {
@@ -614,9 +616,33 @@ export type GUIResponseContainer = {
     container: string;
     error?: string;
 };
+export type GUIResponseExec = {
+    command: 'exec';
+    data: { containerId: string; code?: number | null; stderr: string; stdout: string };
+    error?: string;
+};
+
 export type GUIResponse =
     | GUIResponseInfo
     | GUIResponseContainers
     | GUIResponseImages
     | GUIResponseContainer
+    | GUIResponseExec
     | { command: 'stopped' };
+
+export type GUIRequestInfo = {
+    type: 'info';
+};
+
+export type GUIRequestImages = {
+    type: 'images';
+};
+export type GUIRequestContainers = {
+    type: 'containers';
+};
+export type GUIRequestContainer = {
+    type: 'containers';
+    container: string;
+};
+
+export type GUIRequest = GUIRequestInfo | GUIRequestImages | GUIRequestContainers | GUIRequestContainer;

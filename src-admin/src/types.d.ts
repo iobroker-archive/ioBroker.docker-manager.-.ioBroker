@@ -1,5 +1,3 @@
-import type { DockerManagerAdapter } from './main';
-
 export type DockerContainerInspect = {
     Id: string;
     Created: string;
@@ -29,16 +27,17 @@ export type DockerContainerInspect = {
     Platform: string;
     MountLabel: string;
     ProcessLabel: string;
-    AppArmorProfile: string;
+    // eslint-disable-next-line @typescript-eslint/no-redundant-type-constituents
+    AppArmorProfile: 'unconfined' | 'docker-default' | string;
     ExecIDs: null | string[];
     HostConfig: {
         Binds: string[];
         ContainerIDFile: string;
         LogConfig: {
-            Type: string;
-            Config: Record<string, unknown>;
+            Type: LogDriver;
+            Config: Record<string, string>;
         };
-        NetworkMode: string;
+        NetworkMode: NetworkMode;
         PortBindings: Record<
             string,
             Array<{
@@ -62,11 +61,11 @@ export type DockerContainerInspect = {
         DnsSearch: string[];
         ExtraHosts: null | string[];
         GroupAdd: null | string[];
-        IpcMode: string;
+        IpcMode: 'none' | 'host';
         Cgroup: string;
         Links: null | string[];
         OomScoreAdj: number;
-        PidMode: string;
+        PidMode?: 'host';
         Privileged: boolean;
         PublishAllPorts: boolean;
         ReadonlyRootfs: boolean;
@@ -107,6 +106,8 @@ export type DockerContainerInspect = {
         IOMaximumBandwidth: number;
         MaskedPaths: string[];
         ReadonlyPaths: string[];
+        Sysctls?: Record<string, string>;
+        Init?: boolean;
     };
     GraphDriver: {
         Data: {
@@ -119,11 +120,11 @@ export type DockerContainerInspect = {
         Name: string;
     };
     Mounts: Array<{
-        Type: string;
+        Type: 'bind' | 'volume' | 'tmpfs' | 'npipe';
         Source: string;
         Destination: string;
         Mode: string;
-        RW: boolean;
+        RW?: boolean;
         Propagation: string;
     }>;
     Config: {
@@ -145,6 +146,8 @@ export type DockerContainerInspect = {
         Entrypoint: string[];
         OnBuild: null | string[];
         Labels: Record<string, string>;
+        StopSignal?: string;
+        StopTimeout?: number;
     };
     NetworkSettings: {
         Bridge: string;
@@ -251,9 +254,9 @@ export type LogDriver =
 
 export interface PortBinding {
     /** Container port (required) */
-    containerPort: number;
+    containerPort: number | string;
     /** Host port (optional for publishAllPorts) */
-    hostPort?: number;
+    hostPort?: number | string;
     /** Host IP (e.g. 127.0.0.1) */
     hostIP?: string;
     protocol?: Protocol; // default tcp
@@ -368,8 +371,6 @@ export interface Security {
     /** --cap-add / --cap-drop */
     capAdd?: string[];
     capDrop?: string[];
-    /** --security-opt (apparmor=..., seccomp=..., no-new-privileges, label:...) */
-    securityOpt?: string[];
     /** user namespace: --userns */
     usernsMode?: string; // e.g. "host", "private"
     /** --ipc / --pid */
@@ -380,7 +381,8 @@ export interface Security {
     /** seccomp profile path or "unconfined" */
     seccomp?: string;
     /** apparmor profile */
-    apparmor?: string;
+    // eslint-disable-next-line @typescript-eslint/no-redundant-type-constituents
+    apparmor?: 'unconfined' | 'docker-default' | string;
     /** device cgroup rules */
     deviceCgroupRules?: string[]; // e.g. "c 189:* rmw"
     /** extra groups inside container */
@@ -486,6 +488,7 @@ export interface ContainerConfig {
 
     /** Detach & Auto-remove */
     detach?: boolean; // -d
+    // If true, container is removed after exit (cannot be used with restart policies)
     removeOnExit?: boolean; // --rm
 
     /** Ports */
@@ -614,11 +617,18 @@ export type GUIResponseContainer = {
     container: string;
     error?: string;
 };
+export type GUIResponseExec = {
+    command: 'exec';
+    data: { containerId: string; code?: number | null; stderr: string; stdout: string };
+    error?: string;
+};
+
 export type GUIResponse =
     | GUIResponseInfo
     | GUIResponseContainers
     | GUIResponseImages
     | GUIResponseContainer
+    | GUIResponseExec
     | { command: 'stopped' };
 
 export type GUIRequestInfo = {

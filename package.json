@@ -54,7 +54,7 @@
     "lint-frontend": "cd src-admin && eslint -c eslint.config.mjs",
     "build": "npm run build:ts && npm run build:gui",
     "build:gui": "node tasks.js --build",
-    "build:ts": "tsc -p tsconfig.build.json && node tasks.js --copy-i18n",
+    "build:ts": "tsc -p tsconfig.build.json && node tasks.js --copy-i18n && npm pack",
     "release": "release-script",
     "update-packages": "npx -y npm-check-updates --upgrade && cd src-admin && npx -y npm-check-updates --upgrade",
     "0-clean": "node tasks.js --0-clean",

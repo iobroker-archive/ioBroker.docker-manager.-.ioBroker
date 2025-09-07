@@ -71,6 +71,10 @@ export default class App extends GenericApp<GenericAppProps, AppState> {
     private refreshTimer: ReturnType<typeof setTimeout> | null = null;
     private connectToBackEndInterval: ReturnType<typeof setInterval> | null = null;
     private connectToBackEndCounter = 0;
+    private lastRefresh = 0;
+    private commandCallbacks: {
+        [containerId: string]: (data: { stderr: string; stdout: string; code?: number | null }) => void;
+    } = {};
 
     constructor(props: GenericAppProps) {
         const extendedProps: GenericAppProps = { ...props };
@@ -91,11 +95,11 @@ export default class App extends GenericApp<GenericAppProps, AppState> {
         };
 
         extendedProps.sentryDSN = window.sentryDSN;
-        // extendedProps.socket = {
-        //     protocol: 'http:',
-        //     host: '192.168.178.45',
-        //     port: 8081,
-        // };
+        extendedProps.socket = {
+            protocol: 'http:',
+            host: '192.168.1.71',
+            port: 8081,
+        };
 
         super(props, extendedProps);
 
@@ -104,6 +108,12 @@ export default class App extends GenericApp<GenericAppProps, AppState> {
             alive: false,
             backendRunning: false,
             container: {},
+            selectedTab:
+                (window.localStorage.getItem(`${this.adapterName}.${this.instance}.selectedTab`) as
+                    | 'info'
+                    | 'images'
+                    | 'containers') || 'info',
+            ready: false,
         };
 
         this.alert = window.alert;
@@ -139,6 +149,11 @@ export default class App extends GenericApp<GenericAppProps, AppState> {
     };
 
     refreshBackendSubscription(afterAlive?: boolean): void {
+        if (this.lastRefresh && Date.now() - this.lastRefresh < 1000) {
+            return;
+        }
+        this.lastRefresh = Date.now();
+
         if (this.refreshTimer) {
             clearTimeout(this.refreshTimer);
         }
@@ -167,18 +182,49 @@ export default class App extends GenericApp<GenericAppProps, AppState> {
         }
 
         void this.socket
-            .subscribeOnInstance(`docker-manager.${this.instance}`, this.state.selectedTab, null, this.onBackendUpdates)
+            .subscribeOnInstance(
+                `docker-manager.${this.instance}`,
+                this.state.selectedTab || 'info',
+                null,
+                this.onBackendUpdates,
+            )
             .then(this.onSubscribeToBackEndSubmitted)
             .catch(this.onSubscribeToBackEndFailed);
     }
 
-    async onConnectionReady(): Promise<void> {
-        this.socket
-            .subscribeState(`system.adapter.docker-manager.${this.instance}.alive`, this.onAlive)
-            .catch(e =>
-                this.showError(`Cannot subscribe on system.adapter.docker-manager.${this.instance}.alive: ${e}`),
-            );
+    onExecuteCommand = (
+        containerId: string,
+        command: string,
+        cb: ((data: { stderr: string; stdout: string; code?: number }) => void) | null,
+    ): void => {
+        if (!cb) {
+            if (this.commandCallbacks[containerId]) {
+                void this.socket
+                    .subscribeOnInstance(
+                        `docker-manager.${this.instance}`,
+                        'containers',
+                        { containerId: containerId, command: '', terminate: true },
+                        this.onBackendUpdates,
+                    )
+                    .then(this.onSubscribeToBackEndSubmitted)
+                    .catch(this.onSubscribeToBackEndFailed);
+                delete this.commandCallbacks[containerId];
+            }
+            return;
+        }
+        this.commandCallbacks[containerId] = cb;
+        void this.socket
+            .subscribeOnInstance(
+                `docker-manager.${this.instance}`,
+                'containers',
+                { containerId: containerId, command },
+                this.onBackendUpdates,
+            )
+            .then(this.onSubscribeToBackEndSubmitted)
+            .catch(this.onSubscribeToBackEndFailed);
+    };
 
+    async onConnectionReady(): Promise<void> {
         const alive = await this.socket.getState(`system.adapter.docker-manager.${this.instance}.alive`);
 
         if (alive?.val) {
@@ -189,6 +235,12 @@ export default class App extends GenericApp<GenericAppProps, AppState> {
             ready: true,
             alive: !!alive?.val,
         });
+
+        this.socket
+            .subscribeState(`system.adapter.docker-manager.${this.instance}.alive`, this.onAlive)
+            .catch(e =>
+                this.showError(`Cannot subscribe on system.adapter.docker-manager.${this.instance}.alive: ${e}`),
+            );
     }
 
     onAlive = (_id: string, state: ioBroker.State | null | undefined): void => {
@@ -208,8 +260,35 @@ export default class App extends GenericApp<GenericAppProps, AppState> {
         if (!update) {
             return;
         }
+        if (update.command === 'exec') {
+            if (update.data?.containerId && this.commandCallbacks[update.data.containerId]) {
+                this.commandCallbacks[update.data.containerId](update.data);
+                if (update.data.code !== undefined) {
+                    delete this.commandCallbacks[update.data.containerId];
+                }
+            }
+            return;
+        }
         if (update.command === 'info') {
-            this.setState({ info: update.data, version: update.version || 'unknown' });
+            this.setState({ info: update.data, version: update.version || 'unknown', error: update.error });
+        } else if (update.command === 'images') {
+            update.data?.sort((a, b) => {
+                const aText = a.repository + (a.tag || 'latest');
+                const bText = b.repository + (b.tag || 'latest');
+                return aText.localeCompare(bText);
+            });
+            this.setState({ images: update.data || [], error: update.error });
+        } else if (update.command === 'containers') {
+            update.data?.sort((a, b) => {
+                const aText = a.names || a.id;
+                const bText = b.names || b.id;
+                return aText.localeCompare(bText);
+            });
+            this.setState({ containers: update.data || [], error: update.error });
+        } else if (update.command === 'container' && update.container) {
+            const newContainers = { ...this.state.container };
+            newContainers[update.container] = update.data as DockerContainerInspect;
+            this.setState({ container: newContainers, error: update.error });
         }
     };
 
@@ -263,18 +342,21 @@ export default class App extends GenericApp<GenericAppProps, AppState> {
     renderContainersTab(): React.ReactNode {
         return (
             <ContainersTab
+                theme={this.state.theme}
                 alive={this.state.alive}
                 socket={this.socket}
                 instance={this.instance}
                 images={this.state.images}
                 containers={this.state.containers}
                 container={this.state.container}
+                themeType={this.state.themeType}
+                onExecuteCommand={this.onExecuteCommand}
             />
         );
     }
 
     render(): React.JSX.Element {
-        if (!this.state.ready) {
+        if (!this.state.ready || !this.state.alive) {
             return (
                 <StyledEngineProvider injectFirst>
                     <ThemeProvider theme={this.state.theme}>
@@ -359,8 +441,8 @@ export default class App extends GenericApp<GenericAppProps, AppState> {
                             </Tabs>
                         </AppBar>
 
-                        <div style={this.state.selectedTab === 'info' ? styles.tabContent : styles.tabContentNoSave}>
-                            {this.state.selectedTab === 'info' && this.renderInfoTab()}
+                        <div style={styles.tabContentNoSave}>
+                            {(!this.state.selectedTab || this.state.selectedTab === 'info') && this.renderInfoTab()}
                             {this.state.selectedTab === 'images' && this.renderImagesTab()}
                             {this.state.selectedTab === 'containers' && this.renderContainersTab()}
                         </div>

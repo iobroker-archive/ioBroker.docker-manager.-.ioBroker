@@ -1,6 +1,5 @@
 import React, { Component } from 'react';
-import { type AdminConnection, I18n } from '@iobroker/adapter-react-v5';
-import type { ContainerInfo, DockerContainerInspect, ImageInfo } from '../types';
+import { type AdminConnection, I18n, type IobTheme, type ThemeType } from '@iobroker/adapter-react-v5';
 import {
     Button,
     CircularProgress,
@@ -16,15 +15,27 @@ import {
     TableCell,
     TableHead,
     TableRow,
-    FormControl,
-    Select,
-    InputLabel,
-    MenuItem,
     Tooltip,
+    Snackbar,
     TextField,
+    LinearProgress,
 } from '@mui/material';
-import { Add as AddIcon, Delete as DeleteIcon, Refresh as RefreshIcon, PlayArrow, Pause } from '@mui/icons-material';
-import type { ContainerConfig } from '../../../src/types';
+import {
+    Add as AddIcon,
+    Delete as DeleteIcon,
+    Refresh as RefreshIcon,
+    PlayArrow,
+    Pause,
+    Warning as AlertIcon,
+    Close as CloseIcon,
+    Info as InfoIcon,
+    ReceiptLong as LogsIcon,
+    TextRotationNone as ExecuteIcon,
+    Stop,
+} from '@mui/icons-material';
+import type { ContainerInfo, DockerContainerInspect, ImageInfo, ContainerConfig } from '../types';
+import CreateContainerDialog from '../Components/CreateContainer';
+import { mapInspectToConfig } from '../Components/utils';
 
 interface ContainersTabProps {
     socket: AdminConnection;
@@ -33,22 +44,39 @@ interface ContainersTabProps {
     images: ImageInfo[] | undefined;
     containers: ContainerInfo[] | undefined;
     container: { [id: string]: DockerContainerInspect };
+    themeType: ThemeType;
+    theme: IobTheme;
+    onExecuteCommand: (
+        containerId: string,
+        command: string,
+        cb: ((data: { stderr: string; stdout: string; code?: number | null }) => void) | null,
+    ) => void;
 }
 
 interface ContainersTabState {
     showAddDialog: boolean;
+    logs: string[] | null;
     showDeleteDialog: string; // image name
     addImage: ContainerConfig | null;
     requesting: boolean;
     showRecreateDialog: string;
     showStopDialog: string;
     showRestartDialog: string;
+    showError: string;
+    showHint: string;
+    dockerInspect?: DockerContainerInspect | null;
+    showExecDialog: string;
+    execCommand: string;
+    execResults: { stderr: string; stdout: string };
 }
 
 export default class ContainersTab extends Component<ContainersTabProps, ContainersTabState> {
+    private lastAddImage: ContainerConfig | null = null;
+
     constructor(props: ContainersTabProps) {
         super(props);
         this.state = {
+            logs: null,
             showAddDialog: false,
             showDeleteDialog: '',
             addImage: null,
@@ -56,87 +84,96 @@ export default class ContainersTab extends Component<ContainersTabProps, Contain
             showRecreateDialog: '',
             showStopDialog: '',
             showRestartDialog: '',
+            showError: '',
+            showHint: '',
+            dockerInspect: null,
+            showExecDialog: '',
+            execCommand: window.localStorage.getItem('exec') || '',
+            execResults: { stderr: '', stdout: '' },
         };
     }
 
+    componentDidMount(): void {
+        this.props.onExecuteCommand(this.state.showExecDialog, this.state.execCommand, null);
+    }
+
+    async triggerRecreateDialog(id: string): Promise<void> {
+        const result: { result: DockerContainerInspect | null } = await this.props.socket.sendTo(
+            `docker-manager.${this.props.instance}`,
+            'container:inspect',
+            {
+                id,
+            },
+        );
+        if (result?.result) {
+            this.setState({ addImage: mapInspectToConfig(result.result), showRecreateDialog: id });
+        } else {
+            this.setState({
+                showError: 'Cannot get information for container',
+                showRecreateDialog: '',
+            });
+        }
+    }
+
     renderAddDialog(): React.JSX.Element | null {
-        if (!this.state.showAddDialog) {
+        if (!this.state.showAddDialog && !this.state.showRecreateDialog) {
             return null;
         }
+
         return (
-            <Dialog
-                open={!0}
-                onClose={() => this.setState({ showAddDialog: false })}
-            >
-                <DialogTitle>{I18n.t('Create new container')}</DialogTitle>
-                <DialogContent style={{ display: 'flex', flexDirection: 'column', gap: 20, minWidth: 400 }}>
-                    <FormControl
-                        fullWidth
-                        variant="standard"
-                    >
-                        <InputLabel>{I18n.t('Image')}</InputLabel>
-                        <Select
-                            variant="standard"
-                            value={this.state.addImage?.image || ''}
-                            onChange={e =>
-                                this.setState({
-                                    addImage: { ...(this.state.addImage as ContainerConfig), image: e.target.value },
-                                })
+            <CreateContainerDialog
+                instance={this.props.instance}
+                theme={this.props.theme}
+                themeType={this.props.themeType}
+                images={this.props.images}
+                containers={this.props.containers || []}
+                requesting={this.state.requesting}
+                socket={this.props.socket}
+                config={this.state.addImage || undefined}
+                reCreateId={this.state.showRecreateDialog}
+                onClose={(addImage, isRun?: boolean): void => {
+                    if (!addImage) {
+                        this.setState({ showAddDialog: false, showRecreateDialog: '' });
+                        return;
+                    }
+                    this.lastAddImage = JSON.parse(JSON.stringify(addImage));
+                    this.setState({ requesting: true }, async () => {
+                        try {
+                            if (this.state.showRecreateDialog) {
+                                // remove old container
+                                await this.props.socket.sendTo(
+                                    `docker-manager.${this.props.instance}`,
+                                    'container:remove',
+                                    {
+                                        id: this.state.showRecreateDialog,
+                                    },
+                                );
                             }
-                        >
-                            {this.props.images!.map(image => (
-                                <MenuItem
-                                    key={`${image.repository}:${image.tag || 'latest'}`}
-                                    value={`${image.repository}:${image.tag || 'latest'}`}
-                                >{`${image.repository}:${image.tag || 'latest'}`}</MenuItem>
-                            ))}
-                        </Select>
-                    </FormControl>
-                    <TextField
-                        label={I18n.t('Container name')}
-                        variant="standard"
-                        fullWidth
-                        value={this.state.addImage?.name || ''}
-                        onChange={e =>
+
+                            const result: { result: { stdout: string; stderr: string } } =
+                                await this.props.socket.sendTo(
+                                    `docker-manager.${this.props.instance}`,
+                                    `container:${isRun ? 'run' : 'create'}`,
+                                    addImage,
+                                );
                             this.setState({
-                                addImage: { ...(this.state.addImage as ContainerConfig), name: e.target.value },
-                            })
-                        }
-                    />
-                </DialogContent>
-                <DialogActions>
-                    <Button
-                        variant="contained"
-                        color="primary"
-                        onClick={() => {
-                            this.setState({ requesting: true }, async () => {
-                                try {
-                                    await this.props.socket.sendTo(
-                                        `docker-manager.${this.props.instance}`,
-                                        'image:run',
-                                        this.state.addImage,
-                                    );
-                                    this.setState({ showAddDialog: false, requesting: false });
-                                } catch (e) {
-                                    console.error(`Cannot create container image ${this.state.addImage!.name}: ${e}`);
-                                    alert(`Cannot pull image ${this.state.addImage!.name}: ${e}`);
-                                    this.setState({ requesting: false });
-                                }
+                                showAddDialog: false,
+                                requesting: false,
+                                showRecreateDialog: '',
+                                showHint: result?.result.stdout || '',
+                                showError: result?.result.stderr || '',
                             });
-                        }}
-                    >
-                        {this.state.requesting ? <CircularProgress size={24} /> : <AddIcon />}
-                        {I18n.t('Create')}
-                    </Button>
-                    <Button
-                        variant="contained"
-                        color="grey"
-                        onClick={() => this.setState({ showAddDialog: false })}
-                    >
-                        {I18n.t('Cancel')}
-                    </Button>
-                </DialogActions>
-            </Dialog>
+                        } catch (e) {
+                            console.error(`Cannot create container image ${this.state.addImage!.name}: ${e}`);
+                            alert(`Cannot pull image ${this.state.addImage!.name}: ${e}`);
+                            this.setState({
+                                requesting: false,
+                                showError: `Cannot create container image ${this.state.addImage!.name}: ${e}`,
+                            });
+                        }
+                    });
+                }}
+            />
         );
     }
 
@@ -162,82 +199,39 @@ export default class ContainersTab extends Component<ContainersTabProps, Contain
                         onClick={() => {
                             this.setState({ requesting: true }, async () => {
                                 try {
-                                    await this.props.socket.sendTo(
-                                        `docker-manager.${this.props.instance}`,
-                                        'container:remove',
-                                        {
-                                            id: this.state.showDeleteDialog,
-                                        },
-                                    );
-                                    this.setState({ showDeleteDialog: '', requesting: false });
+                                    const result: { result: { stdout: string; stderr: string } } =
+                                        await this.props.socket.sendTo(
+                                            `docker-manager.${this.props.instance}`,
+                                            'container:remove',
+                                            {
+                                                id: this.state.showDeleteDialog,
+                                            },
+                                        );
+                                    this.setState({
+                                        showDeleteDialog: '',
+                                        requesting: false,
+                                        showHint: result?.result.stdout || '',
+                                        showError: result?.result.stderr || '',
+                                    });
                                 } catch (e) {
                                     console.error(`Cannot delete container ${this.state.showDeleteDialog}: ${e}`);
                                     alert(`Cannot delete image ${this.state.showDeleteDialog}: ${e}`);
-                                    this.setState({ requesting: false });
+                                    this.setState({
+                                        requesting: false,
+                                        showError: `Cannot delete image ${this.state.showDeleteDialog}: ${e}`,
+                                    });
                                 }
                             });
                         }}
+                        startIcon={this.state.requesting ? <CircularProgress size={24} /> : <DeleteIcon />}
                     >
-                        {this.state.requesting ? <CircularProgress size={24} /> : <DeleteIcon />}
                         {I18n.t('Delete')}
                     </Button>
                     <Button
                         variant="contained"
                         color="grey"
                         onClick={() => this.setState({ showDeleteDialog: '' })}
-                    >
-                        {I18n.t('Cancel')}
-                    </Button>
-                </DialogActions>
-            </Dialog>
-        );
-    }
-
-    renderConfirmRecreateDialog(): React.JSX.Element | null {
-        if (!this.state.showRecreateDialog) {
-            return null;
-        }
-
-        return (
-            <Dialog
-                open={!0}
-                onClose={() => this.setState({ showRecreateDialog: '' })}
-            >
-                <DialogTitle>{I18n.t('Re-create container')}</DialogTitle>
-                <DialogContent>
-                    {I18n.t('Are you sure you want to re-create container "%s"?', this.state.showRecreateDialog)}
-                </DialogContent>
-                <DialogActions>
-                    <Button
-                        variant="contained"
-                        color="primary"
-                        disabled={this.state.requesting}
-                        onClick={() => {
-                            this.setState({ requesting: true }, async () => {
-                                try {
-                                    await this.props.socket.sendTo(
-                                        `docker-manager.${this.props.instance}`,
-                                        'container:remove',
-                                        {
-                                            id: this.state.showRecreateDialog,
-                                        },
-                                    );
-                                    this.setState({ showRecreateDialog: '', requesting: false });
-                                } catch (e) {
-                                    console.error(`Cannot delete container ${this.state.showRecreateDialog}: ${e}`);
-                                    alert(`Cannot delete image ${this.state.showRecreateDialog}: ${e}`);
-                                    this.setState({ requesting: false });
-                                }
-                            });
-                        }}
-                    >
-                        {this.state.requesting ? <CircularProgress size={24} /> : <DeleteIcon />}
-                        {I18n.t('Delete')}
-                    </Button>
-                    <Button
-                        variant="contained"
-                        color="grey"
-                        onClick={() => this.setState({ showRecreateDialog: '' })}
+                        startIcon={<CloseIcon />}
                     >
                         {I18n.t('Cancel')}
                     </Button>
@@ -270,14 +264,15 @@ export default class ContainersTab extends Component<ContainersTabProps, Contain
                                 this.setState({ showStopDialog: '' }),
                             )
                         }
+                        startIcon={this.state.requesting ? <CircularProgress size={24} /> : <Pause />}
                     >
-                        {this.state.requesting ? <CircularProgress size={24} /> : <Pause />}
                         {I18n.t('Stop')}
                     </Button>
                     <Button
                         variant="contained"
                         color="grey"
                         onClick={() => this.setState({ showStopDialog: '' })}
+                        startIcon={<CloseIcon />}
                     >
                         {I18n.t('Cancel')}
                     </Button>
@@ -308,14 +303,20 @@ export default class ContainersTab extends Component<ContainersTabProps, Contain
                         onClick={() => {
                             this.setState({ requesting: true }, async () => {
                                 try {
-                                    await this.props.socket.sendTo(
-                                        `docker-manager.${this.props.instance}`,
-                                        'container:restart',
-                                        {
-                                            id: this.state.showRestartDialog,
-                                        },
-                                    );
-                                    this.setState({ showRestartDialog: '', requesting: false });
+                                    const result: { result: { stdout: string; stderr: string } } =
+                                        await this.props.socket.sendTo(
+                                            `docker-manager.${this.props.instance}`,
+                                            'container:restart',
+                                            {
+                                                id: this.state.showRestartDialog,
+                                            },
+                                        );
+                                    this.setState({
+                                        showRestartDialog: '',
+                                        requesting: false,
+                                        showHint: result?.result.stdout || '',
+                                        showError: result?.result.stderr || '',
+                                    });
                                 } catch (e) {
                                     console.error(`Cannot restart container ${this.state.showRestartDialog}: ${e}`);
                                     alert(`Cannot restart image ${this.state.showRestartDialog}: ${e}`);
@@ -323,14 +324,15 @@ export default class ContainersTab extends Component<ContainersTabProps, Contain
                                 }
                             });
                         }}
+                        startIcon={this.state.requesting ? <CircularProgress size={24} /> : <RefreshIcon />}
                     >
-                        {this.state.requesting ? <CircularProgress size={24} /> : <RefreshIcon />}
                         {I18n.t('Restart')}
                     </Button>
                     <Button
                         variant="contained"
                         color="grey"
                         onClick={() => this.setState({ showRestartDialog: '' })}
+                        startIcon={<CloseIcon />}
                     >
                         {I18n.t('Cancel')}
                     </Button>
@@ -342,14 +344,21 @@ export default class ContainersTab extends Component<ContainersTabProps, Contain
     stopStartContainer(id: string, isStart: boolean, cb?: () => void): void {
         this.setState({ requesting: true }, async () => {
             try {
-                await this.props.socket.sendTo(
+                const result: { result: { stdout: string; stderr: string } } = await this.props.socket.sendTo(
                     `docker-manager.${this.props.instance}`,
                     `container:${isStart ? 'start' : 'stop'}`,
                     {
                         id,
                     },
                 );
-                this.setState({ requesting: false }, () => cb?.());
+                this.setState(
+                    {
+                        requesting: false,
+                        showHint: result?.result.stdout || '',
+                        showError: result?.result.stderr || '',
+                    },
+                    () => cb?.(),
+                );
             } catch (e) {
                 console.error(`Cannot ${isStart ? 'start' : 'stop'} container ${id}: ${e}`);
                 alert(`Cannot ${isStart ? 'start' : 'stop'} container ${id}: ${e}`);
@@ -358,20 +367,240 @@ export default class ContainersTab extends Component<ContainersTabProps, Contain
         });
     }
 
+    renderInspect(): React.JSX.Element | null {
+        if (!this.state.dockerInspect) {
+            return null;
+        }
+
+        const info = this.state.dockerInspect;
+
+        return (
+            <Dialog
+                open={!0}
+                onClose={() => this.setState({ dockerInspect: null })}
+                maxWidth="md"
+                fullWidth
+            >
+                <DialogTitle>{I18n.t('Image information')}</DialogTitle>
+                <DialogContent style={{ display: 'flex', gap: 20, flexDirection: 'column' }}>
+                    <pre>{JSON.stringify(info, null, 2)}</pre>
+                </DialogContent>
+                <DialogActions>
+                    <Button
+                        variant="contained"
+                        color="grey"
+                        onClick={() => this.setState({ dockerInspect: null })}
+                        startIcon={<CloseIcon />}
+                    >
+                        {I18n.t('Close')}
+                    </Button>
+                </DialogActions>
+            </Dialog>
+        );
+    }
+
+    renderErrorDialog(): React.JSX.Element | null {
+        if (!this.state.showError) {
+            return null;
+        }
+
+        return (
+            <Dialog
+                open={!0}
+                onClose={() => this.setState({ showError: '' })}
+            >
+                <DialogTitle>{I18n.t('Error')}</DialogTitle>
+                <DialogContent style={{ display: 'flex', gap: 20, flexDirection: 'column' }}>
+                    <AlertIcon style={{ color: 'yellow' }} />
+                    {this.state.showError}
+                </DialogContent>
+                <DialogActions>
+                    <Button
+                        variant="contained"
+                        color="grey"
+                        onClick={() => this.setState({ showError: '' })}
+                        startIcon={<CloseIcon />}
+                    >
+                        {I18n.t('Close')}
+                    </Button>
+                </DialogActions>
+            </Dialog>
+        );
+    }
+
+    renderSnackbar(): React.JSX.Element {
+        return (
+            <Snackbar
+                open={!!this.state.showHint}
+                autoHideDuration={5000}
+                onClose={() => this.setState({ showHint: '' })}
+                message={this.state.showHint}
+                action={
+                    <IconButton
+                        size="small"
+                        aria-label="close"
+                        color="inherit"
+                        onClick={() => this.setState({ showHint: '' })}
+                    >
+                        <CloseIcon fontSize="small" />
+                    </IconButton>
+                }
+            />
+        );
+    }
+
+    executeCommand(): void {
+        window.localStorage.setItem('exec', this.state.execCommand);
+
+        this.setState({ requesting: true }, () => {
+            this.props.onExecuteCommand(
+                this.state.showExecDialog,
+                this.state.execCommand,
+                (result: { stdout: string; stderr: string; code?: number }): void => {
+                    if (result.code !== undefined) {
+                        this.setState({
+                            requesting: false,
+                            execResults: { stdout: result.stdout, stderr: result.stderr },
+                        });
+                    } else {
+                        this.setState({ execResults: result || { stdout: '', stderr: '' } });
+                    }
+                },
+            );
+        });
+    }
+
+    stopCommandExecution(): void {
+        this.props.onExecuteCommand(this.state.showExecDialog, this.state.execCommand, null);
+        this.setState({ requesting: false });
+    }
+
+    renderExecDialog(): React.JSX.Element | null {
+        if (!this.state.showExecDialog) {
+            return null;
+        }
+
+        return (
+            <Dialog
+                open={!0}
+                onClose={() => {
+                    if (!this.state.requesting) {
+                        this.setState({ showExecDialog: '', execCommand: '', execResults: { stdout: '', stderr: '' } });
+                    }
+                }}
+                maxWidth="lg"
+                fullWidth
+            >
+                <DialogTitle>{I18n.t('Execute command inside container')}</DialogTitle>
+                <DialogContent style={{ display: 'flex', gap: 20, flexDirection: 'column' }}>
+                    <div style={{ display: 'flex', gap: 10 }}>
+                        <TextField
+                            label={I18n.t('Command')}
+                            variant="standard"
+                            autoFocus
+                            onKeyUp={e => {
+                                if (e.key === 'Enter' && this.state.execCommand && !this.state.requesting) {
+                                    this.executeCommand();
+                                }
+                            }}
+                            disabled={this.state.requesting}
+                            fullWidth
+                            value={this.state.execCommand}
+                            onChange={e => this.setState({ execCommand: e.target.value })}
+                        />
+                        <Fab
+                            color="secondary"
+                            size="small"
+                            disabled={!this.state.execCommand}
+                            onClick={() => {
+                                if (this.state.requesting) {
+                                    this.stopCommandExecution();
+                                } else {
+                                    this.executeCommand();
+                                }
+                            }}
+                        >
+                            {this.state.requesting ? <Stop /> : <PlayArrow />}
+                        </Fab>
+                    </div>
+                    {this.state.requesting ? <LinearProgress style={{ width: '100%' }} /> : null}
+                    {this.state.execResults?.stdout ? (
+                        <pre style={{ padding: 10, borderRadius: 5 }}>{this.state.execResults.stdout}</pre>
+                    ) : null}
+                    {this.state.execResults?.stderr ? (
+                        <pre style={{ padding: 10, borderRadius: 5, color: 'red' }}>
+                            {this.state.execResults.stderr}
+                        </pre>
+                    ) : null}
+                </DialogContent>
+                <DialogActions>
+                    <Button
+                        variant="contained"
+                        color="grey"
+                        disabled={this.state.requesting}
+                        onClick={() =>
+                            this.setState({
+                                showExecDialog: '',
+                                execCommand: '',
+                                execResults: { stdout: '', stderr: '' },
+                            })
+                        }
+                        startIcon={<CloseIcon />}
+                    >
+                        {I18n.t('Close')}
+                    </Button>
+                </DialogActions>
+            </Dialog>
+        );
+    }
+
+    renderLogs(): React.JSX.Element | null {
+        if (!this.state.logs) {
+            return null;
+        }
+
+        return (
+            <Dialog
+                open={!0}
+                onClose={() => this.setState({ logs: null })}
+                maxWidth="md"
+                fullWidth
+            >
+                <DialogTitle>{I18n.t('Container logs')}</DialogTitle>
+                <DialogContent style={{ display: 'flex', gap: 20, flexDirection: 'column' }}>
+                    <pre>{this.state.logs.join('\n')}</pre>
+                </DialogContent>
+                <DialogActions>
+                    <Button
+                        variant="contained"
+                        color="grey"
+                        onClick={() => this.setState({ logs: null })}
+                        startIcon={<CloseIcon />}
+                    >
+                        {I18n.t('Close')}
+                    </Button>
+                </DialogActions>
+            </Dialog>
+        );
+    }
+
     render(): React.JSX.Element {
         return (
             <Paper style={{ width: '100%', height: '100%' }}>
                 {this.renderAddDialog()}
                 {this.renderConfirmDeleteDialog()}
-                {this.renderConfirmRecreateDialog()}
                 {this.renderConfirmRestartDialog()}
                 {this.renderConfirmStopDialog()}
+                {this.renderErrorDialog()}
+                {this.renderSnackbar()}
+                {this.renderInspect()}
+                {this.renderLogs()}
+                {this.renderExecDialog()}
                 <div>Explanation about images</div>
                 <Table size="small">
                     <TableHead>
                         <TableRow>
                             <TableCell>
-                                {I18n.t('ID')}
                                 <Tooltip
                                     title={I18n.t('Add new container')}
                                     slotProps={{ popper: { sx: { pointerEvents: 'none' } } }}
@@ -380,12 +609,12 @@ export default class ContainersTab extends Component<ContainersTabProps, Contain
                                         size="small"
                                         color="primary"
                                         aria-label="add"
-                                        style={{ marginLeft: 10 }}
+                                        style={{ marginRight: 10 }}
                                         disabled={!this.props.alive}
                                         onClick={() =>
                                             this.setState({
                                                 showAddDialog: true,
-                                                addImage: {
+                                                addImage: this.lastAddImage || {
                                                     image:
                                                         this.props.images && this.props.images.length
                                                             ? `${this.props.images[0].repository}:${this.props.images[0].tag || 'latest'}`
@@ -398,6 +627,7 @@ export default class ContainersTab extends Component<ContainersTabProps, Contain
                                         <AddIcon />
                                     </Fab>
                                 </Tooltip>
+                                {I18n.t('ID')}
                             </TableCell>
                             <TableCell>{I18n.t('Name')}</TableCell>
                             <TableCell>{I18n.t('Image')}</TableCell>
@@ -412,17 +642,94 @@ export default class ContainersTab extends Component<ContainersTabProps, Contain
                     <TableBody>
                         {this.props.containers?.map(container => (
                             <TableRow key={container.id}>
-                                <TableCell>{container.image || '--'}</TableCell>
+                                <TableCell>{container.id || '--'}</TableCell>
                                 <TableCell>{container.names || '--'}</TableCell>
                                 <TableCell>{container.image || '--'}</TableCell>
                                 <TableCell>{container.command || '--'}</TableCell>
                                 <TableCell>
-                                    {container.createdAt ? new Date(container.createdAt).toLocaleString() : '--'}
+                                    {container.createdAt
+                                        ? new Date(container.createdAt.replace(/ [A-Z]+$/, '')).toLocaleString()
+                                        : '--'}
                                 </TableCell>
                                 <TableCell>{container.status || '--'}</TableCell>
                                 <TableCell>{container.uptime || '--'}</TableCell>
-                                <TableCell>{container.ports}</TableCell>
                                 <TableCell>
+                                    {container.ports.split(',').map((it, i) => (
+                                        <div key={i.toString()}>{it.trim()}</div>
+                                    ))}
+                                </TableCell>
+                                <TableCell>
+                                    <IconButton
+                                        size="small"
+                                        title={I18n.t('Logs')}
+                                        disabled={!this.props.alive}
+                                        onClick={async () => {
+                                            try {
+                                                const result: { result: string[] | null } =
+                                                    await this.props.socket.sendTo(
+                                                        `docker-manager.${this.props.instance}`,
+                                                        'container:logs',
+                                                        {
+                                                            id: container.id,
+                                                        },
+                                                    );
+                                                this.setState({
+                                                    showAddDialog: false,
+                                                    logs: result?.result,
+                                                    showError: !result?.result ? 'Cannot get logs for container' : '',
+                                                });
+                                            } catch (e) {
+                                                console.error(`Cannot get logs for container ${container.id}: ${e}`);
+                                                alert(`Cannot get logs for container ${container.id}: ${e}`);
+                                            }
+                                        }}
+                                    >
+                                        <LogsIcon />
+                                    </IconButton>
+                                    <IconButton
+                                        size="small"
+                                        title={I18n.t('Execute command in container')}
+                                        disabled={!this.props.alive || container.status !== 'running'}
+                                        onClick={() =>
+                                            this.setState({
+                                                showExecDialog: container.id,
+                                                execResults: { stderr: '', stdout: '' },
+                                            })
+                                        }
+                                    >
+                                        <ExecuteIcon />
+                                    </IconButton>
+                                    <IconButton
+                                        size="small"
+                                        title={I18n.t('Information about image')}
+                                        disabled={!this.props.alive}
+                                        onClick={async () => {
+                                            try {
+                                                const result: { result: DockerContainerInspect | null } =
+                                                    await this.props.socket.sendTo(
+                                                        `docker-manager.${this.props.instance}`,
+                                                        'container:inspect',
+                                                        {
+                                                            id: container.id,
+                                                        },
+                                                    );
+                                                this.setState({
+                                                    showAddDialog: false,
+                                                    dockerInspect: result?.result,
+                                                    showError: !result?.result
+                                                        ? 'Cannot get information for container'
+                                                        : '',
+                                                });
+                                            } catch (e) {
+                                                console.error(
+                                                    `Cannot get information for container ${container.id}: ${e}`,
+                                                );
+                                                alert(`Cannot get information for container ${container.id}: ${e}`);
+                                            }
+                                        }}
+                                    >
+                                        <InfoIcon />
+                                    </IconButton>
                                     <IconButton
                                         size="small"
                                         title={
@@ -450,7 +757,10 @@ export default class ContainersTab extends Component<ContainersTabProps, Contain
                                     <IconButton
                                         size="small"
                                         title={I18n.t('Restart container')}
-                                        disabled={!this.props.alive}
+                                        disabled={
+                                            !this.props.alive ||
+                                            (container.status !== 'running' && container.status !== 'restarting')
+                                        }
                                         onClick={() =>
                                             this.setState({
                                                 showRestartDialog: container.id,
@@ -463,18 +773,18 @@ export default class ContainersTab extends Component<ContainersTabProps, Contain
                                         size="small"
                                         title={I18n.t('Recreate container with new image')}
                                         disabled={!this.props.alive}
-                                        onClick={() =>
-                                            this.setState({
-                                                showRecreateDialog: container.id,
-                                            })
-                                        }
+                                        onClick={() => this.triggerRecreateDialog(container.id)}
                                     >
                                         <RefreshIcon />
                                     </IconButton>
                                     <IconButton
                                         size="small"
                                         title={I18n.t('Delete image')}
-                                        disabled={!this.props.alive}
+                                        disabled={
+                                            !this.props.alive ||
+                                            container.status === 'running' ||
+                                            container.status === 'restarting'
+                                        }
                                         onClick={() =>
                                             this.setState({
                                                 showDeleteDialog: container.id,

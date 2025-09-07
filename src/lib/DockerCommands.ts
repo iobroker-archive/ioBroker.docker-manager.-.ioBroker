@@ -3,7 +3,7 @@
 // It manages containers defined in adapter.config.containers and monitors other containers
 
 import { promisify } from 'node:util';
-import { exec } from 'node:child_process';
+import { exec, spawn } from 'node:child_process';
 import type {
     ContainerConfig,
     ContainerInfo,
@@ -13,6 +13,7 @@ import type {
     ImageInfo,
 } from '../types';
 import { type DockerManagerAdapter } from '../main';
+import type { ChildProcessWithoutNullStreams } from 'child_process';
 
 const execPromise = promisify(exec);
 
@@ -24,9 +25,9 @@ export default class DockerCommands {
     #dockerVersion: string = '';
     #needSudo: boolean = false;
     readonly #waitReady: Promise<void>;
-    #adapter: DockerManagerAdapter;
-    #ownContainers: ContainerConfig[] = [];
-    #timers: {
+    readonly #adapter: DockerManagerAdapter;
+    readonly #ownContainers: ContainerConfig[] = [];
+    readonly #timers: {
         images?: ReturnType<typeof setInterval>;
         containers?: ReturnType<typeof setInterval>;
         info?: ReturnType<typeof setInterval>;
@@ -34,10 +35,17 @@ export default class DockerCommands {
     } = {
         container: {},
     };
+    readonly #runningCommands: {
+        [sid: string]: {
+            p: ChildProcessWithoutNullStreams;
+            killTimeout: NodeJS.Timeout | null;
+            onUnsubscribe?: boolean;
+        };
+    } = {};
 
     constructor(adapter: DockerManagerAdapter) {
         this.#adapter = adapter;
-        this.#ownContainers = adapter.config.containers;
+        this.#ownContainers = adapter.config.containers || [];
         this.#waitReady = new Promise<void>(resolve => this.init().then(() => resolve()));
     }
 
@@ -68,15 +76,38 @@ export default class DockerCommands {
             if (container.enabled !== false) {
                 // Check if container is running
                 const containerInfo = status.find(it => it.names === container.name);
-                if (containerInfo && containerInfo.status !== 'running' && containerInfo.status !== 'restarting') {
-                    // Start the container
-                    this.#adapter.log.info(`Starting own container ${container.name}`);
+                if (containerInfo) {
+                    if (containerInfo.status !== 'running' && containerInfo.status !== 'restarting') {
+                        // Start the container
+                        this.#adapter.log.info(`Starting own container ${container.name}`);
+
+                        try {
+                            const result = await this.containerStart(containerInfo.id);
+                            if (result.stderr) {
+                                this.#adapter.log.warn(
+                                    `Cannot start own container ${container.name}: ${result.stderr}`,
+                                );
+                            }
+                        } catch (e) {
+                            this.#adapter.log.warn(`Cannot start own container ${container.name}: ${e.message}`);
+                        }
+                    } else {
+                        this.#adapter.log.debug(`Own container ${container.name} is already running`);
+                    }
+                } else {
+                    // Create and start the container
+                    this.#adapter.log.info(`Creating and starting own container ${container.name}`);
                     if (!images.find(it => `${it.repository}:${it.tag}` === container.image)) {
                         this.#adapter.log.info(`Pulling image ${container.image} for own container ${container.name}`);
                         try {
-                            await this.imagePull(container.image);
+                            const result = await this.imagePull(container.image);
+                            if (result.stderr) {
+                                this.#adapter.log.warn(`Cannot pull image ${container.image}: ${result.stderr}`);
+                                continue;
+                            }
                         } catch (e) {
                             this.#adapter.log.warn(`Cannot pull image ${container.image}: ${e.message}`);
+                            continue;
                         }
                         // Check that image is available now
                         images = await this.imageList();
@@ -87,9 +118,11 @@ export default class DockerCommands {
                             continue;
                         }
                     }
-
                     try {
-                        await this.imageRun(container.image, container);
+                        const result = await this.containerRun(container.image, container);
+                        if (result.stderr) {
+                            this.#adapter.log.warn(`Cannot start own container ${container.name}: ${result.stderr}`);
+                        }
                     } catch (e) {
                         this.#adapter.log.warn(`Cannot start own container ${container.name}: ${e.message}`);
                     }
@@ -109,11 +142,13 @@ export default class DockerCommands {
     async #isDockerInstalled(): Promise<string | false> {
         try {
             const result = await execPromise('docker --version');
-            if (!result.stdout && result.stdout) {
-                return result.stdout;
+            if (!result.stderr && result.stdout) {
+                // "Docker version 28.3.2, build 578ccf6\n"
+                return result.stdout.split('\n')[0].trim();
             }
-        } catch {
-            // ignore
+            this.#adapter.log.debug(`Docker not installed: ${result.stderr}`);
+        } catch (e) {
+            this.#adapter.log.debug(`Docker not installed: ${e.message}`);
         }
         return false;
     }
@@ -139,14 +174,15 @@ export default class DockerCommands {
         const lines = stdout.split('\n');
         for (const line of lines) {
             const parts = line.trim().split(/\s+/);
-            if (parts.length === 5 && parts[0] !== 'TYPE') {
-                const sizeStr = parts[3];
-                const reclaimableStr = parts[4].split(' ')[0];
-                const size = this.#parseSize(sizeStr);
-                const reclaimable = this.#parseSize(reclaimableStr);
-                result.total.size += size;
-                result.total.reclaimable += reclaimable;
+            if (parts.length >= 5 && parts[0] !== 'TYPE') {
+                let size: number;
+                let reclaimable: number;
+
                 if (parts[0] === 'Images') {
+                    const sizeStr = parts[3];
+                    const reclaimableStr = parts[4].split(' ')[0];
+                    size = this.#parseSize(sizeStr);
+                    reclaimable = this.#parseSize(reclaimableStr);
                     result.images = {
                         total: parseInt(parts[1], 10),
                         active: parseInt(parts[2], 10),
@@ -154,6 +190,10 @@ export default class DockerCommands {
                         reclaimable: reclaimable,
                     };
                 } else if (parts[0] === 'Containers') {
+                    const sizeStr = parts[3];
+                    const reclaimableStr = parts[4].split(' ')[0];
+                    size = this.#parseSize(sizeStr);
+                    reclaimable = this.#parseSize(reclaimableStr);
                     result.containers = {
                         total: parseInt(parts[1], 10),
                         active: parseInt(parts[2], 10),
@@ -161,6 +201,10 @@ export default class DockerCommands {
                         reclaimable: reclaimable,
                     };
                 } else if (parts[0] === 'Local' && parts[1] === 'Volumes') {
+                    const sizeStr = parts[4];
+                    const reclaimableStr = parts[5].split(' ')[0];
+                    size = this.#parseSize(sizeStr);
+                    reclaimable = this.#parseSize(reclaimableStr);
                     result.volumes = {
                         total: parseInt(parts[2], 10),
                         active: parseInt(parts[3], 10),
@@ -168,6 +212,10 @@ export default class DockerCommands {
                         reclaimable: reclaimable,
                     };
                 } else if (parts[0] === 'Build' && parts[1] === 'Cache') {
+                    const sizeStr = parts[4];
+                    const reclaimableStr = parts[5].split(' ')[0];
+                    size = this.#parseSize(sizeStr);
+                    reclaimable = this.#parseSize(reclaimableStr);
                     result.buildCache = {
                         total: parseInt(parts[2], 10),
                         active: parseInt(parts[3], 10),
@@ -175,64 +223,136 @@ export default class DockerCommands {
                         reclaimable: reclaimable,
                     };
                 }
+                result.total.size += size!;
+                result.total.reclaimable += reclaimable!;
             }
         }
         return result;
     }
 
-    async imagePull(image: ImageName): Promise<void> {
-        await this.#exec(`pull ${image}`);
-        const images = await this.imageList();
-        if (!images.find(it => `${it.repository}:${it.tag}` === image)) {
-            throw new Error(`Image ${image} not found after pull`);
+    async imagePull(image: ImageName): Promise<{ stdout: string; stderr: string }> {
+        try {
+            const result = await this.#exec(`pull ${image}`);
+            const images = await this.imageList();
+            if (!images.find(it => `${it.repository}:${it.tag}` === image)) {
+                throw new Error(`Image ${image} not found after pull`);
+            }
+            await this.#adapter.sendToGui({
+                command: 'images',
+                data: images,
+            });
+            return result;
+        } catch (e) {
+            return { stdout: '', stderr: e.message.toString() };
         }
-        await this.#adapter.sendToGui({
-            command: 'images',
-            data: images,
-        });
     }
 
-    async imageRun(image: ImageName, config: ContainerConfig): Promise<void> {
-        await this.#exec(`run ${this.#toDockerRun({ ...config, image })}`);
+    async containerRun(image: ImageName, config: ContainerConfig): Promise<{ stdout: string; stderr: string }> {
+        try {
+            const result = await this.#exec(`run ${this.#toDockerRun({ ...config, image })}`);
+            const containers = await this.containerList();
+            await this.#adapter.sendToGui({
+                command: 'containers',
+                data: containers,
+            });
+            return result;
+        } catch (e) {
+            return { stdout: '', stderr: e.message.toString() };
+        }
+    }
+
+    async containerCreate(image: ImageName, config: ContainerConfig): Promise<{ stdout: string; stderr: string }> {
+        try {
+            const result = await this.#exec(`create ${this.#toDockerRun({ ...config, image })}`);
+            const containers = await this.containerList();
+            await this.#adapter.sendToGui({
+                command: 'containers',
+                data: containers,
+            });
+            return result;
+        } catch (e) {
+            return { stdout: '', stderr: e.message.toString() };
+        }
     }
 
     async imageList(): Promise<ImageInfo[]> {
-        const { stdout } = await this.#exec(
-            'images --format "{{.Repository}}:{{.Tag}};{{.ID}};{{.CreatedAt}};{{.Size}}"',
-        );
-        return stdout
-            .split('\n')
-            .filter(line => line.trim() !== '')
-            .map(line => {
-                const [repositoryTag, id, createdSince, size] = line.split(';');
-                const [repository, tag] = repositoryTag.split(':');
-                return { repository, tag, id, createdSince, size: this.#parseSize(size) };
-            });
-    }
-
-    async imageBuild(dockerfilePath: string, tag: string): Promise<void> {
-        await this.#exec(`build -t ${tag} -f ${dockerfilePath} .`);
-    }
-
-    async imageTag(imageId: ImageName, newTag: string): Promise<void> {
-        await this.#exec(`tag ${imageId} ${newTag}`);
-    }
-
-    async imageRemove(image: ImageName): Promise<void> {
-        await this.#exec(`rmi ${image}`);
-        const images = await this.imageList();
-        if (images.find(it => `${it.repository}:${it.tag}` === image)) {
-            throw new Error(`Image ${image} not found after pull`);
+        try {
+            const { stdout } = await this.#exec(
+                'images --format "{{.Repository}}:{{.Tag}};{{.ID}};{{.CreatedAt}};{{.Size}}"',
+            );
+            return stdout
+                .split('\n')
+                .filter(line => line.trim() !== '')
+                .map(line => {
+                    const [repositoryTag, id, createdSince, size] = line.split(';');
+                    const [repository, tag] = repositoryTag.split(':');
+                    return {
+                        repository,
+                        tag,
+                        id,
+                        createdSince,
+                        size: this.#parseSize(size),
+                    };
+                });
+        } catch (e) {
+            this.#adapter.log.debug(`Cannot list images: ${e.message}`);
+            return [];
         }
-        await this.#adapter.sendToGui({
-            command: 'images',
-            data: images,
-        });
     }
 
-    async imageInspect(imageId: ImageName): Promise<DockerImageInspect> {
-        const { stdout } = await this.#exec(`inspect ${imageId}`);
-        return JSON.parse(stdout)[0];
+    async imageBuild(dockerfilePath: string, tag: string): Promise<{ stdout: string; stderr: string }> {
+        try {
+            const result = await this.#exec(`build -t ${tag} -f ${dockerfilePath} .`);
+            const images = await this.imageList();
+            await this.#adapter.sendToGui({
+                command: 'images',
+                data: images,
+            });
+            return result;
+        } catch (e) {
+            return { stdout: '', stderr: e.message.toString() };
+        }
+    }
+
+    async imageTag(imageId: ImageName, newTag: string): Promise<{ stdout: string; stderr: string }> {
+        try {
+            const result = await this.#exec(`tag ${imageId} ${newTag}`);
+            const images = await this.imageList();
+            await this.#adapter.sendToGui({
+                command: 'images',
+                data: images,
+            });
+            return result;
+        } catch (e) {
+            return { stdout: '', stderr: e.message.toString() };
+        }
+    }
+
+    async imageRemove(imageId: ImageName): Promise<{ stdout: string; stderr: string }> {
+        try {
+            const result = await this.#exec(`rmi ${imageId}`);
+            const images = await this.imageList();
+            if (images.find(it => `${it.repository}:${it.tag}` === imageId)) {
+                return { stdout: '', stderr: `Image ${imageId} still found after deletion` };
+            }
+            await this.#adapter.sendToGui({
+                command: 'images',
+                data: images,
+            });
+            return result;
+        } catch (e) {
+            return { stdout: '', stderr: e.message.toString() };
+        }
+    }
+
+    async imageInspect(imageId: ImageName): Promise<DockerImageInspect | null> {
+        try {
+            const { stdout } = await this.#exec(`inspect ${imageId}`);
+            return JSON.parse(stdout)[0];
+        } catch (e) {
+            this.#adapter.log.debug(`Cannot inspect image: ${e.message.toString()}`);
+            return null;
+        }
     }
 
     #parseSize(sizeStr: string): number {
@@ -252,122 +372,248 @@ export default class DockerCommands {
         return 0;
     }
 
-    async containerStop(container: ContainerName): Promise<void> {
-        let containers = await this.containerList();
-        // find ID of container
-        const containerInfo = containers.find(it => it.names === container || it.id === container);
-        if (!containerInfo) {
-            throw new Error(`Container ${container} not found`);
-        }
+    async containerStop(container: ContainerName): Promise<{ stdout: string; stderr: string }> {
+        try {
+            let containers = await this.containerList();
+            // find ID of container
+            const containerInfo = containers.find(it => it.names === container || it.id === container);
+            if (!containerInfo) {
+                throw new Error(`Container ${container} not found`);
+            }
 
-        await this.#exec(`stop ${containerInfo.id}`);
-        containers = await this.containerList();
-        if (containers.find(it => it.id === containerInfo.id && it.status === 'running')) {
-            throw new Error(`Container ${container} still running after stop`);
+            const result = await this.#exec(`stop ${containerInfo.id}`);
+            containers = await this.containerList();
+            if (containers.find(it => it.id === containerInfo.id && it.status === 'running')) {
+                throw new Error(`Container ${container} still running after stop`);
+            }
+            await this.#adapter.sendToGui({
+                command: 'containers',
+                data: containers,
+            });
+            return result;
+        } catch (e) {
+            return { stdout: '', stderr: e.message.toString() };
         }
-        await this.#adapter.sendToGui({
-            command: 'containers',
-            data: containers,
-        });
     }
 
-    async containerStart(container: ContainerName): Promise<void> {
-        let containers = await this.containerList();
-        // find ID of container
-        const containerInfo = containers.find(it => it.names === container || it.id === container);
-        if (!containerInfo) {
-            throw new Error(`Container ${container} not found`);
-        }
+    async containerStart(container: ContainerName): Promise<{ stdout: string; stderr: string }> {
+        try {
+            let containers = await this.containerList();
+            // find ID of container
+            const containerInfo = containers.find(it => it.names === container || it.id === container);
+            if (!containerInfo) {
+                throw new Error(`Container ${container} not found`);
+            }
 
-        await this.#exec(`start ${containerInfo.id}`);
-        containers = await this.containerList();
-        if (
-            containers.find(it => it.id === containerInfo.id && it.status !== 'running' && it.status !== 'restarting')
-        ) {
-            throw new Error(`Container ${container} still running after stop`);
+            const result = await this.#exec(`start ${containerInfo.id}`);
+            containers = await this.containerList();
+            if (
+                containers.find(
+                    it => it.id === containerInfo.id && it.status !== 'running' && it.status !== 'restarting',
+                )
+            ) {
+                throw new Error(`Container ${container} still running after stop`);
+            }
+            await this.#adapter.sendToGui({
+                command: 'containers',
+                data: containers,
+            });
+            return result;
+        } catch (e) {
+            return { stdout: '', stderr: e.message.toString() };
         }
-        await this.#adapter.sendToGui({
-            command: 'containers',
-            data: containers,
-        });
     }
 
-    async containerRestart(container: ContainerName, timeoutSeconds?: number): Promise<void> {
-        let containers = await this.containerList();
-        // find ID of container
-        const containerInfo = containers.find(it => it.names === container || it.id === container);
-        if (!containerInfo) {
-            throw new Error(`Container ${container} not found`);
-        }
+    async containerRestart(
+        container: ContainerName,
+        timeoutSeconds?: number,
+    ): Promise<{ stdout: string; stderr: string }> {
+        try {
+            let containers = await this.containerList();
+            // find ID of container
+            const containerInfo = containers.find(it => it.names === container || it.id === container);
+            if (!containerInfo) {
+                throw new Error(`Container ${container} not found`);
+            }
 
-        await this.#exec(`restart -t ${timeoutSeconds || 5} ${containerInfo.id}`);
-        containers = await this.containerList();
-        await this.#adapter.sendToGui({
-            command: 'containers',
-            data: containers,
-        });
+            const result = await this.#exec(`restart -t ${timeoutSeconds || 5} ${containerInfo.id}`);
+            containers = await this.containerList();
+            await this.#adapter.sendToGui({
+                command: 'containers',
+                data: containers,
+            });
+            return result;
+        } catch (e) {
+            return { stdout: '', stderr: e.message.toString() };
+        }
     }
 
-    async containerRemove(container: ContainerName): Promise<void> {
-        let containers = await this.containerList();
-        // find ID of container
-        const containerInfo = containers.find(it => it.names === container || it.id === container);
-        if (!containerInfo) {
-            throw new Error(`Container ${container} not found`);
-        }
+    async containerRemove(container: ContainerName): Promise<{ stdout: string; stderr: string }> {
+        try {
+            let containers = await this.containerList();
+            // find ID of container
+            const containerInfo = containers.find(it => it.names === container || it.id === container);
+            if (!containerInfo) {
+                throw new Error(`Container ${container} not found`);
+            }
 
-        await this.#exec(`rm ${container}`);
+            const result = await this.#exec(`rm ${container}`);
 
-        containers = await this.containerList();
-        if (containers.find(it => it.id === containerInfo.id)) {
-            throw new Error(`Container ${container} still found after stop`);
+            containers = await this.containerList();
+            if (containers.find(it => it.id === containerInfo.id)) {
+                throw new Error(`Container ${container} still found after stop`);
+            }
+            await this.#adapter.sendToGui({
+                command: 'containers',
+                data: containers,
+            });
+            return result;
+        } catch (e) {
+            return { stdout: '', stderr: e.message.toString() };
         }
-        await this.#adapter.sendToGui({
-            command: 'containers',
-            data: containers,
-        });
     }
 
     async containerList(all: boolean = true): Promise<ContainerInfo[]> {
-        const { stdout } = await this.#exec(
-            `ps ${all ? '-a' : ''} --format  "{{.Names}};{{.Status}};{{.ID}};{{.Image}};{{.Command}};{{.CreatedAt}};{{.Ports}}"`,
-        );
-        return stdout
-            .split('\n')
-            .filter(line => line.trim() !== '')
-            .map(line => {
-                const [names, statusInfo, id, image, command, createdAt, ports] = line.split(';');
-                const [status, ...uptime] = statusInfo.split(' ');
-                let statusKey: ContainerInfo['status'] = status.toLowerCase() as ContainerInfo['status'];
-                if ((statusKey as string) === 'up') {
-                    statusKey = 'running';
-                }
-                return { id, image, command, createdAt, status: statusKey, uptime: uptime.join(' '), ports, names };
-            });
+        try {
+            const { stdout } = await this.#exec(
+                `ps ${all ? '-a' : ''} --format  "{{.Names}};{{.Status}};{{.ID}};{{.Image}};{{.Command}};{{.CreatedAt}};{{.Ports}}"`,
+            );
+            return stdout
+                .split('\n')
+                .filter(line => line.trim() !== '')
+                .map(line => {
+                    const [names, statusInfo, id, image, command, createdAt, ports] = line.split(';');
+                    const [status, ...uptime] = statusInfo.split(' ');
+                    let statusKey: ContainerInfo['status'] = status.toLowerCase() as ContainerInfo['status'];
+                    if ((statusKey as string) === 'up') {
+                        statusKey = 'running';
+                    }
+                    return { id, image, command, createdAt, status: statusKey, uptime: uptime.join(' '), ports, names };
+                });
+        } catch (e) {
+            this.#adapter.log.debug(`Cannot list containers: ${e.message}`);
+            return [];
+        }
     }
 
     async containerLogs(
         containerNameOrId: ContainerName,
         options: { tail?: number; follow?: boolean } = {},
     ): Promise<string[]> {
-        const args = [];
-        if (options.tail !== undefined) {
-            args.push(`--tail ${options.tail}`);
+        try {
+            const args = [];
+            if (options.tail !== undefined) {
+                args.push(`--tail ${options.tail}`);
+            }
+            if (options.follow) {
+                args.push(`--follow`);
+            }
+            const result = await this.#exec(`logs${args.length ? ` ${args.join(' ')}` : ''} ${containerNameOrId}`);
+            return (result.stdout || result.stderr).split('\n').filter(line => line.trim() !== '');
+        } catch (e) {
+            return e
+                .toString()
+                .split('\n')
+                .map((line: string): string => line.trim());
         }
-        if (options.follow) {
-            args.push(`--follow`);
-        }
-        const { stdout } = await this.#exec(`logs ${args.join(' ')} ${containerNameOrId}`);
-        return stdout.split('\n').filter(line => line.trim() !== '');
     }
 
-    containerExec(container: ContainerName, command: string): Promise<{ stdout: string; stderr: string }> {
-        return this.#exec(`exec -it ${container} ${command}`);
+    containerExecTerminate(sid: string, force?: boolean, onUnsubscribe?: boolean): boolean {
+        if (this.#runningCommands[sid]) {
+            this.#runningCommands[sid].onUnsubscribe = onUnsubscribe;
+            if (force) {
+                this.#runningCommands[sid].p.kill('SIGKILL');
+            } else {
+                this.#runningCommands[sid].p.kill('SIGTERM');
+                this.#runningCommands[sid].killTimeout ||= setTimeout(() => {
+                    if (this.#runningCommands[sid]) {
+                        this.#runningCommands[sid].killTimeout = null;
+                        this.#runningCommands[sid].p.kill('SIGKILL');
+                    }
+                }, 2000);
+            }
+            return true;
+        }
+        return false;
     }
 
-    async containerInspect(containerNameOrId: string): Promise<DockerContainerInspect> {
-        const { stdout } = await this.#exec(`inspect ${containerNameOrId}`);
-        return JSON.parse(stdout)[0] as DockerContainerInspect;
+    containerExec(container: ContainerName, command: string, sid: string): void {
+        const hasTTY = process.stdin.isTTY && process.stdout.isTTY;
+        const args: string[] = ['exec'];
+
+        if (hasTTY) {
+            args.push('-t');
+        } // add TTY only when available
+
+        args.push(container);
+        command.split(' ').forEach(part => args.push(part));
+        let p: ChildProcessWithoutNullStreams;
+        try {
+            if (this.#needSudo) {
+                this.#adapter.log.debug(`Executing: sudo docker ${args.join(' ')}`);
+                p = spawn('sudo', ['docker', ...args], { stdio: ['pipe', 'pipe', 'pipe'] });
+            } else {
+                this.#adapter.log.debug(`Executing: docker ${args.join(' ')}`);
+                p = spawn('docker', args, { stdio: ['pipe', 'pipe', 'pipe'] });
+            }
+        } catch (e) {
+            void this.#adapter.sendToGui(
+                {
+                    command: 'exec',
+                    data: { stdout: '', stderr: e.message.toString(), containerId: container, code: 1 },
+                },
+                sid,
+            );
+            return;
+        }
+
+        this.#runningCommands[sid] = { p, killTimeout: null };
+
+        let stdout = '';
+        let stderr = '';
+        p.stdout.on('data', d => {
+            if (this.#runningCommands[sid] && !this.#runningCommands[sid].onUnsubscribe) {
+                stdout += d;
+                void this.#adapter.sendToGui(
+                    { command: 'exec', data: { stdout, stderr, containerId: container } },
+                    sid,
+                );
+            }
+        });
+        p.stderr.on('data', d => {
+            if (this.#runningCommands[sid] && !this.#runningCommands[sid].onUnsubscribe) {
+                stderr += d;
+                void this.#adapter.sendToGui(
+                    { command: 'exec', data: { stdout, stderr, containerId: container } },
+                    sid,
+                );
+            }
+        });
+
+        p.on('close', code => {
+            this.#adapter.log.debug(`Command finished with code ${code}`);
+            const killTimeout = this.#runningCommands[sid]?.killTimeout;
+            if (killTimeout) {
+                clearTimeout(killTimeout);
+            }
+            if (this.#runningCommands[sid] && !this.#runningCommands[sid].onUnsubscribe) {
+                void this.#adapter.sendToGui(
+                    { command: 'exec', data: { stdout, stderr, containerId: container, code } },
+                    sid,
+                );
+            }
+            delete this.#runningCommands[sid];
+        });
+    }
+
+    async containerInspect(containerNameOrId: string): Promise<DockerContainerInspect | null> {
+        try {
+            const { stdout } = await this.#exec(`inspect ${containerNameOrId}`);
+            return JSON.parse(stdout)[0] as DockerContainerInspect;
+        } catch (e) {
+            this.#adapter.log.debug(`Cannot inspect container: ${e.message.toString()}`);
+            return null;
+        }
     }
 
     /**
@@ -377,7 +623,8 @@ export default class DockerCommands {
         const args: string[] = [];
 
         // detach / interactive
-        if (config.detach) {
+        if (config.detach !== false) {
+            // default is true
             args.push('-d');
         }
         if (config.tty) {
@@ -428,6 +675,9 @@ export default class DockerCommands {
         }
         if (config.ports) {
             for (const p of config.ports) {
+                if (!p.containerPort) {
+                    continue;
+                }
                 const mapping =
                     (p.hostIP ? `${p.hostIP}:` : '') +
                     (p.hostPort ? `${p.hostPort}:` : '') +
@@ -500,6 +750,9 @@ export default class DockerCommands {
         if (config.security?.noNewPrivileges) {
             args.push('--security-opt', 'no-new-privileges');
         }
+        if (config.security?.apparmor) {
+            args.push('--security-opt', `apparmor=${config.security.apparmor}`);
+        }
 
         // network
         if (config.networkMode) {
@@ -558,79 +811,107 @@ export default class DockerCommands {
         return args.join(' ');
     }
 
-    updatePolling(scan: { images: number; containers: number; info: number; container: string[] }): void {
-        if (scan.info && !this.#timers.info) {
-            this.#timers.info = setInterval(async () => {
-                await this.isReady();
-                if (!(await this.#isDockerInstalled())) {
-                    await this.#adapter.sendToGui({
-                        command: 'info',
-                        error: 'not installed',
-                    });
-                    return;
-                }
-                const data = await this.discUsage();
-                await this.#adapter.sendToGui({
-                    command: 'info',
-                    data,
-                    version: this.#dockerVersion,
-                });
-            }, 10_000);
+    async #pollingInfo(): Promise<void> {
+        await this.isReady();
+        if (!this.#installed) {
+            await this.#adapter.sendToGui({
+                command: 'info',
+                error: 'not installed',
+            });
+            return;
+        }
+        const data = await this.discUsage();
+        await this.#adapter.sendToGui({
+            command: 'info',
+            data,
+            version: this.#dockerVersion,
+        });
+    }
+
+    async #pollingImages(): Promise<void> {
+        await this.isReady();
+        if (!this.#installed) {
+            await this.#adapter.sendToGui({
+                command: 'info',
+                error: 'not installed',
+            });
+            return;
+        }
+        const data = await this.imageList();
+        await this.#adapter.sendToGui({
+            command: 'images',
+            data,
+        });
+    }
+
+    async #pollingContainers(): Promise<void> {
+        await this.isReady();
+        if (!this.#installed) {
+            await this.#adapter.sendToGui({
+                command: 'info',
+                error: 'not installed',
+            });
+            return;
+        }
+        const data = await this.containerList();
+        await this.#adapter.sendToGui({
+            command: 'containers',
+            data,
+        });
+    }
+
+    async #pollingContainer(container: string): Promise<void> {
+        await this.isReady();
+        if (!this.#installed) {
+            await this.#adapter.sendToGui({
+                command: 'info',
+                error: 'not installed',
+            });
+            return;
+        }
+        const data = await this.containerInspect(container);
+        await this.#adapter.sendToGui({
+            command: 'container',
+            container,
+            data,
+        });
+    }
+
+    pollingUpdate(scan: { images: number; containers: number; info: number; container: string[] }): void {
+        if (scan.info) {
+            this.#timers.info ||= setInterval(async () => this.#pollingInfo(), 10_000);
+            setTimeout(() => void this.#pollingInfo(), 50); // do it immediately, too
         } else if (this.#timers.info) {
             clearInterval(this.#timers.info);
+            this.#timers.info = undefined;
         }
 
-        if (scan.images && !this.#timers.images) {
-            this.#timers.images = setInterval(async () => {
-                await this.isReady();
-                if (!(await this.#isDockerInstalled())) {
-                    await this.#adapter.sendToGui({
-                        command: 'info',
-                        error: 'not installed',
-                    });
-                    return;
-                }
-                const data = await this.imageList();
-                await this.#adapter.sendToGui({
-                    command: 'images',
-                    data,
-                });
+        if (scan.images) {
+            this.#timers.images ||= setInterval(async () => {
+                await this.#pollingImages();
             }, 10_000);
+            setTimeout(() => void this.#pollingImages(), 50); // do it immediately, too
         } else if (this.#timers.images) {
             clearInterval(this.#timers.images);
+            this.#timers.images = undefined;
         }
 
-        if (scan.containers && !this.#timers.containers) {
-            this.#timers.containers = setInterval(async () => {
-                await this.isReady();
-                const data = await this.containerList();
-                await this.#adapter.sendToGui({
-                    command: 'containers',
-                    data,
-                });
-            }, 10_000);
+        if (scan.containers) {
+            this.#timers.containers ||= setInterval(async () => this.#pollingContainers(), 10_000);
+            setTimeout(() => void this.#pollingContainers(), 50); // do it immediately, too
         } else if (this.#timers.containers) {
             clearInterval(this.#timers.containers);
+            this.#timers.containers = undefined;
         }
 
         scan.container.forEach(container => {
-            if (container && !this.#timers.container[container]) {
-                this.#timers.container[container] = setInterval(async () => {
-                    await this.isReady();
-                    if (!(await this.#isDockerInstalled())) {
-                        await this.#adapter.sendToGui({
-                            command: 'info',
-                            error: 'not installed',
-                        });
-                        return;
-                    }
-                    const data = await this.containerInspect(container);
-                    await this.#adapter.sendToGui({
-                        command: 'container',
-                        container,
-                        data,
-                    });
-                }, 10_000);
+            if (container) {
+                this.#timers.container[container] ||= setInterval(
+                    async _container => this.#pollingContainer(_container),
+                    10_000,
+                    container,
+                );
+                setTimeout(_container => void this.#pollingContainer(_container), 50, container); // do it immediately, too
             }
         });
 
@@ -644,6 +925,12 @@ export default class DockerCommands {
     }
 
     destroy(): void {
+        // Destroy all running commands
+        Object.keys(this.#runningCommands).forEach(sid => {
+            this.containerExecTerminate(sid, true);
+        });
+
+        // destroy all timers
         Object.keys(this.#timers.container).forEach((id: string) => {
             clearTimeout(this.#timers.container[id]);
         });

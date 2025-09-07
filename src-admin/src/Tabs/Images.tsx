@@ -16,12 +16,20 @@ import {
     TextField,
     IconButton,
     CircularProgress,
+    Snackbar,
 } from '@mui/material';
 
 import { type AdminConnection, I18n } from '@iobroker/adapter-react-v5';
-import { Add as AddIcon, Delete as DeleteIcon, Refresh as RefreshIcon } from '@mui/icons-material';
+import {
+    Add as AddIcon,
+    Delete as DeleteIcon,
+    Refresh as RefreshIcon,
+    Warning as AlertIcon,
+    Close as CloseIcon,
+    Info as InfoIcon,
+} from '@mui/icons-material';
 
-import type { ContainerInfo, ImageInfo } from '../types';
+import type { ContainerInfo, ImageInfo, DockerImageInspect } from '../types';
 import { size2string } from '../Components/utils';
 
 interface ImagesTabProps {
@@ -38,6 +46,9 @@ interface ImagesTabState {
     addImageName: string;
     addImageTag: string;
     requesting: boolean;
+    showHint: string;
+    showError: string;
+    dockerInspect: DockerImageInspect | null;
 }
 
 export default class ImagesTab extends Component<ImagesTabProps, ImagesTabState> {
@@ -49,6 +60,9 @@ export default class ImagesTab extends Component<ImagesTabProps, ImagesTabState>
             addImageName: '',
             addImageTag: '',
             requesting: false,
+            showHint: '',
+            showError: '',
+            dockerInspect: null,
         };
     }
 
@@ -91,7 +105,7 @@ export default class ImagesTab extends Component<ImagesTabProps, ImagesTabState>
                                         `docker-manager.${this.props.instance}`,
                                         'image:pull',
                                         {
-                                            image: `${this.state.addImageName}:${this.state.addImageTag || 'latest'}`,
+                                            image: `${this.state.addImageName}:${this.state.addImageTag}`,
                                         },
                                     );
                                     this.setState({ showAddDialog: false, requesting: false });
@@ -102,14 +116,15 @@ export default class ImagesTab extends Component<ImagesTabProps, ImagesTabState>
                                 }
                             });
                         }}
+                        startIcon={this.state.requesting ? <CircularProgress size={24} /> : <AddIcon />}
                     >
-                        {this.state.requesting ? <CircularProgress size={24} /> : <AddIcon />}
                         {I18n.t('Pull')}
                     </Button>
                     <Button
                         variant="contained"
                         color="grey"
                         onClick={() => this.setState({ showAddDialog: false })}
+                        startIcon={<CloseIcon />}
                     >
                         {I18n.t('Cancel')}
                     </Button>
@@ -123,12 +138,6 @@ export default class ImagesTab extends Component<ImagesTabProps, ImagesTabState>
             return null;
         }
 
-        const image = this.props.images?.find(
-            img => `${img.repository}:${img.tag || 'latest'}` === this.state.showDeleteDialog,
-        );
-        if (!image) {
-            return null;
-        }
         return (
             <Dialog
                 open={!0}
@@ -146,31 +155,137 @@ export default class ImagesTab extends Component<ImagesTabProps, ImagesTabState>
                         onClick={() => {
                             this.setState({ requesting: true }, async () => {
                                 try {
-                                    await this.props.socket.sendTo(
-                                        `docker-manager.${this.props.instance}`,
-                                        'image:remove',
-                                        {
-                                            image: `${image.repository}:${image.tag || 'latest'}`,
-                                        },
-                                    );
-                                    this.setState({ showDeleteDialog: '', requesting: false });
+                                    const result: { result: { stdout: string; stderr: string } } =
+                                        await this.props.socket.sendTo(
+                                            `docker-manager.${this.props.instance}`,
+                                            'image:remove',
+                                            {
+                                                image: this.state.showDeleteDialog,
+                                            },
+                                        );
+                                    this.setState({
+                                        showDeleteDialog: '',
+                                        showHint: result?.result.stdout || '',
+                                        showError: result?.result.stderr || '',
+                                    });
                                 } catch (e) {
-                                    console.error(`Cannot pull image ${this.state.addImageName}: ${e}`);
-                                    alert(`Cannot pull image ${this.state.addImageName}: ${e}`);
-                                    this.setState({ requesting: false });
+                                    console.error(`Cannot delete image ${this.state.showDeleteDialog}: ${e}`);
+                                    alert(`Cannot delete image ${this.state.showDeleteDialog}: ${e}`);
+                                    this.setState({
+                                        requesting: false,
+                                        showError: `Cannot delete image ${this.state.showDeleteDialog}: ${e}`,
+                                    });
                                 }
                             });
                         }}
+                        startIcon={this.state.requesting ? <CircularProgress size={24} /> : <DeleteIcon />}
                     >
-                        {this.state.requesting ? <CircularProgress size={24} /> : <DeleteIcon />}
                         {I18n.t('Delete')}
                     </Button>
                     <Button
                         variant="contained"
                         color="grey"
                         onClick={() => this.setState({ showDeleteDialog: '' })}
+                        startIcon={<CloseIcon />}
                     >
                         {I18n.t('Cancel')}
+                    </Button>
+                </DialogActions>
+            </Dialog>
+        );
+    }
+
+    renderSnackbar(): React.ReactNode {
+        let text: React.JSX.Element[] = [];
+        if (this.state.showHint) {
+            text = this.state.showHint
+                .split('\n')
+                .filter(line => line.trim())
+                .map((line, i) => (
+                    <div
+                        key={i}
+                        style={{ color: line.includes('up to date') ? 'green' : undefined }}
+                    >
+                        {line}
+                    </div>
+                ));
+        }
+
+        return (
+            <Snackbar
+                open={!!this.state.showHint}
+                autoHideDuration={5000}
+                onClose={() => this.setState({ showHint: '' })}
+                message={text}
+                action={
+                    <IconButton
+                        size="small"
+                        aria-label="close"
+                        color="inherit"
+                        onClick={() => this.setState({ showHint: '' })}
+                    >
+                        <CloseIcon fontSize="small" />
+                    </IconButton>
+                }
+            />
+        );
+    }
+
+    renderErrorDialog(): React.JSX.Element | null {
+        if (!this.state.showError) {
+            return null;
+        }
+
+        return (
+            <Dialog
+                open={!0}
+                onClose={() => this.setState({ showError: '' })}
+            >
+                <DialogTitle>{I18n.t('Error')}</DialogTitle>
+                <DialogContent style={{ display: 'flex', gap: 20, flexDirection: 'column' }}>
+                    <AlertIcon style={{ color: 'yellow' }} />
+                    {this.state.showError}
+                </DialogContent>
+                <DialogActions>
+                    <Button
+                        variant="contained"
+                        color="grey"
+                        onClick={() => this.setState({ showError: '' })}
+                        startIcon={<CloseIcon />}
+                    >
+                        {I18n.t('Close')}
+                    </Button>
+                </DialogActions>
+            </Dialog>
+        );
+    }
+
+    renderInspect(): React.JSX.Element | null {
+        if (!this.state.dockerInspect) {
+            return null;
+        }
+
+        const info = this.state.dockerInspect;
+
+        return (
+            <Dialog
+                open={!0}
+                onClose={() => this.setState({ dockerInspect: null })}
+                maxWidth="md"
+                fullWidth
+            >
+                <DialogTitle>{I18n.t('Image information')}</DialogTitle>
+                <DialogContent style={{ display: 'flex', gap: 20, flexDirection: 'column' }}>
+                    <pre>{JSON.stringify(info, null, 2)}</pre>
+                </DialogContent>
+                <DialogActions>
+                    <Button
+                        variant="contained"
+                        color="grey"
+                        onClick={() => this.setState({ dockerInspect: null })}
+                        startIcon={<CloseIcon />}
+                    >
+                        {I18n.t('Close')}
                     </Button>
                 </DialogActions>
             </Dialog>
@@ -182,12 +297,14 @@ export default class ImagesTab extends Component<ImagesTabProps, ImagesTabState>
             <Paper style={{ width: '100%', height: '100%' }}>
                 {this.renderAddDialog()}
                 {this.renderConfirmDialog()}
+                {this.renderErrorDialog()}
+                {this.renderSnackbar()}
+                {this.renderInspect()}
                 <div>Explanation about images</div>
                 <Table size="small">
                     <TableHead>
                         <TableRow>
-                            <TableCell>
-                                {I18n.t('Repository')}
+                            <TableCell style={{ fontWeight: 'bold' }}>
                                 <Tooltip
                                     title={I18n.t('Add new image')}
                                     slotProps={{ popper: { sx: { pointerEvents: 'none' } } }}
@@ -196,7 +313,7 @@ export default class ImagesTab extends Component<ImagesTabProps, ImagesTabState>
                                         size="small"
                                         color="primary"
                                         aria-label="add"
-                                        style={{ marginLeft: 10 }}
+                                        style={{ marginRight: 10 }}
                                         disabled={!this.props.alive}
                                         onClick={() =>
                                             this.setState({ showAddDialog: true, addImageName: '', addImageTag: '' })
@@ -205,39 +322,78 @@ export default class ImagesTab extends Component<ImagesTabProps, ImagesTabState>
                                         <AddIcon />
                                     </Fab>
                                 </Tooltip>
+                                {I18n.t('Repository')}
                             </TableCell>
-                            <TableCell>{I18n.t('Tag')}</TableCell>
-                            <TableCell>{I18n.t('Image ID')}</TableCell>
-                            <TableCell>{I18n.t('Created')}</TableCell>
-                            <TableCell>{I18n.t('Size')}</TableCell>
-                            <TableCell></TableCell>
+                            <TableCell style={{ fontWeight: 'bold' }}>{I18n.t('Tag')}</TableCell>
+                            <TableCell style={{ fontWeight: 'bold' }}>{I18n.t('Image ID')}</TableCell>
+                            <TableCell style={{ fontWeight: 'bold' }}>{I18n.t('Created')}</TableCell>
+                            <TableCell style={{ fontWeight: 'bold' }}>{I18n.t('Size')}</TableCell>
+                            <TableCell />
                         </TableRow>
                     </TableHead>
                     <TableBody>
                         {this.props.images?.map(image => (
                             <TableRow key={image.id}>
-                                <TableCell>{image.repository || '--'}</TableCell>
-                                <TableCell>{image.tag || '--'}</TableCell>
+                                <TableCell style={{ fontWeight: 'bold', fontSize: '1rem' }}>
+                                    {image.repository || '--'}
+                                </TableCell>
+                                <TableCell style={{ fontStyle: 'italic' }}>{image.tag || '--'}</TableCell>
                                 <TableCell>{image.id || '--'}</TableCell>
                                 <TableCell>
-                                    {image.createdSince ? new Date(image.createdSince).toLocaleString() : '--'}
+                                    {image.createdSince
+                                        ? new Date(image.createdSince.replace(/ [A-Z]+$/, '')).toLocaleString()
+                                        : '--'}
                                 </TableCell>
                                 <TableCell>{size2string(image.size)}</TableCell>
                                 <TableCell>
                                     <IconButton
                                         size="small"
-                                        title={I18n.t('Pull latest version of image')}
+                                        title={I18n.t('Information about image')}
                                         disabled={!this.props.alive}
                                         onClick={async () => {
                                             try {
-                                                await this.props.socket.sendTo(
-                                                    `docker-manager.${this.props.instance}`,
-                                                    'image:pull',
-                                                    {
-                                                        image: `${image.repository}:${image.tag || 'latest'}`,
-                                                    },
-                                                );
-                                                this.setState({ showAddDialog: false });
+                                                const result: { result: DockerImageInspect | null } =
+                                                    await this.props.socket.sendTo(
+                                                        `docker-manager.${this.props.instance}`,
+                                                        'image:inspect',
+                                                        {
+                                                            image: image.id,
+                                                        },
+                                                    );
+                                                this.setState({
+                                                    showAddDialog: false,
+                                                    dockerInspect: result?.result,
+                                                    showError: !result?.result
+                                                        ? 'Cannot get information for image'
+                                                        : '',
+                                                });
+                                            } catch (e) {
+                                                console.error(`Cannot get information for image ${image.id}: ${e}`);
+                                                alert(`Cannot get information for image ${image.id}: ${e}`);
+                                            }
+                                        }}
+                                    >
+                                        <InfoIcon />
+                                    </IconButton>
+                                    <IconButton
+                                        size="small"
+                                        title={I18n.t('Pull latest version of image')}
+                                        disabled={!this.props.alive || !image.tag || image.tag === '<none>'}
+                                        onClick={async () => {
+                                            try {
+                                                const result: { result: { stdout: string; stderr: string } } =
+                                                    await this.props.socket.sendTo(
+                                                        `docker-manager.${this.props.instance}`,
+                                                        'image:pull',
+                                                        {
+                                                            image: image.id,
+                                                        },
+                                                    );
+                                                this.setState({
+                                                    showAddDialog: false,
+                                                    showHint: result?.result.stdout || '',
+                                                    showError: result?.result.stderr || '',
+                                                });
                                             } catch (e) {
                                                 console.error(`Cannot pull image ${this.state.addImageName}: ${e}`);
                                                 alert(`Cannot pull image ${this.state.addImageName}: ${e}`);
@@ -252,12 +408,12 @@ export default class ImagesTab extends Component<ImagesTabProps, ImagesTabState>
                                         disabled={
                                             !this.props.alive ||
                                             this.props.containers?.some(
-                                                c => c.image === `${image.repository}:${image.tag || 'latest'}`,
+                                                c => c.image === `${image.repository}:${image.tag}`,
                                             )
                                         }
                                         onClick={() =>
                                             this.setState({
-                                                showDeleteDialog: `${image.repository}:${image.tag || 'latest'}`,
+                                                showDeleteDialog: image.id,
                                             })
                                         }
                                     >

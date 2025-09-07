@@ -44,6 +44,7 @@ export class DockerManagerAdapter extends Adapter {
             info: 0,
             container: [],
         };
+
         this.#_guiSubscribes?.forEach(it => {
             if (it.type === 'images') {
                 scans.images++;
@@ -56,7 +57,7 @@ export class DockerManagerAdapter extends Adapter {
             }
         });
 
-        this.#dockerCommands?.updatePolling(scans);
+        this.#dockerCommands?.pollingUpdate(scans);
     }
 
     onClientSubscribe(
@@ -66,11 +67,6 @@ export class DockerManagerAdapter extends Adapter {
         this.log.debug(`Subscribe from ${clientId}: ${JSON.stringify(message)}`);
         if (!this.#_guiSubscribes) {
             return { error: `Adapter is still initializing`, accepted: false };
-        }
-        // start camera with obj.message.data
-        if (!this.#_guiSubscribes.find(s => s.clientId === clientId)) {
-            this.log.debug(`Start GUI`);
-            // send state of devices
         }
 
         // inform GUI that subscription is started
@@ -94,7 +90,24 @@ export class DockerManagerAdapter extends Adapter {
             }
         }
 
-        return { accepted: true, heartbeat: 120000 };
+        if (message.message.type === 'containers' && message.message.data?.containerId) {
+            if (message.message.data.terminate) {
+                // terminate execution
+                void this.#dockerCommands?.containerExecTerminate(
+                    message.message.data.containerId,
+                    message.message.data.command,
+                );
+            } else {
+                // start execution
+                void this.#dockerCommands?.containerExec(
+                    message.message.data.containerId,
+                    message.message.data.command,
+                    clientId,
+                );
+            }
+        }
+
+        return { accepted: true };
     }
 
     onClientUnsubscribe(clientId: string): void {
@@ -106,6 +119,7 @@ export class DockerManagerAdapter extends Adapter {
         do {
             deleted = false;
             const pos = this.#_guiSubscribes.findIndex(s => s.clientId === clientId);
+            void this.#dockerCommands?.containerExecTerminate(clientId, false, true);
             if (pos !== -1) {
                 deleted = true;
                 this.#_guiSubscribes.splice(pos, 1);
@@ -114,13 +128,18 @@ export class DockerManagerAdapter extends Adapter {
         this.scanRequests();
     }
 
-    sendToGui = async (data: GUIResponse): Promise<void> => {
+    sendToGui = async (data: GUIResponse, sid?: string): Promise<void> => {
         if (!this.#_guiSubscribes) {
             return;
         }
         if (this.sendToUI) {
             this.log.debug(`Send to GUI: ${JSON.stringify(data)}`);
+            if (sid) {
+                await this.sendToUI({ clientId: sid, data });
+                return;
+            }
 
+            // send to all subscribers of this type
             for (let i = 0; i < this.#_guiSubscribes.length; i++) {
                 if (
                     data.command === 'container' &&
@@ -135,9 +154,12 @@ export class DockerManagerAdapter extends Adapter {
         }
     };
 
-    #onReady(): void {
+    async #onReady(): Promise<void> {
         this.log.info(`Adapter matter-controller started`);
         this.#dockerCommands = new DockerCommands(this);
+        await this.#dockerCommands.init();
+        this.#_guiSubscribes = [];
+        this.scanRequests();
     }
 
     async #onUnload(callback: () => void): Promise<void> {
@@ -158,45 +180,74 @@ export class DockerManagerAdapter extends Adapter {
             // Handled by Device Manager class itself, so ignored here
             return;
         }
+        this.log.debug(`Handle message ${obj.command} ${JSON.stringify(obj)}`);
 
         switch (obj.command) {
-            case 'image:pull':
-                await this.#dockerCommands?.imagePull(obj.message.image);
+            case 'image:pull': {
+                const result = await this.#dockerCommands?.imagePull(obj.message.image);
+                this.sendTo(obj.from, obj.command, { result }, obj.callback);
                 break;
-            case 'image:remove':
-                await this.#dockerCommands?.imageRemove(obj.message.image);
+            }
+            case 'image:inspect': {
+                const result = await this.#dockerCommands?.imageInspect(obj.message.image);
+                this.sendTo(obj.from, obj.command, { result }, obj.callback);
                 break;
-            case 'image:run':
-                await this.#dockerCommands?.imageRun(obj.message.image, obj.message);
+            }
+            case 'image:remove': {
+                const result = await this.#dockerCommands?.imageRemove(obj.message.image);
+                this.sendTo(obj.from, obj.command, { result }, obj.callback);
                 break;
-            case 'container:stop':
-                await this.#dockerCommands?.containerStop(obj.message.id);
+            }
+            case 'image:list': {
+                const result = await this.#dockerCommands?.imageList();
+                this.sendTo(obj.from, obj.command, { result }, obj.callback);
                 break;
-            case 'container:start':
-                await this.#dockerCommands?.containerStart(obj.message.id);
+            }
+            case 'container:run': {
+                const result = await this.#dockerCommands?.containerRun(obj.message.image, obj.message);
+                this.sendTo(obj.from, obj.command, { result }, obj.callback);
                 break;
-            case 'container:restart':
-                await this.#dockerCommands?.containerRestart(obj.message.id);
+            }
+            case 'container:create': {
+                const result = await this.#dockerCommands?.containerCreate(obj.message.image, obj.message);
+                this.sendTo(obj.from, obj.command, { result }, obj.callback);
                 break;
-            case 'container:remove':
-                await this.#dockerCommands?.containerRemove(obj.message.id);
+            }
+
+            case 'container:stop': {
+                const result = await this.#dockerCommands?.containerStop(obj.message.id);
+                this.sendTo(obj.from, obj.command, { result }, obj.callback);
                 break;
-            case 'container:exec': {
-                const result = await this.#dockerCommands?.containerExec(obj.message.id, obj.message.cmd);
+            }
+            case 'container:inspect': {
+                const result = await this.#dockerCommands?.containerInspect(obj.message.id);
+                this.sendTo(obj.from, obj.command, { result }, obj.callback);
+                break;
+            }
+            case 'container:start': {
+                const result = await this.#dockerCommands?.containerStart(obj.message.id);
+                this.sendTo(obj.from, obj.command, { result }, obj.callback);
+                break;
+            }
+            case 'container:restart': {
+                const result = await this.#dockerCommands?.containerRestart(obj.message.id);
+                this.sendTo(obj.from, obj.command, { result }, obj.callback);
+                break;
+            }
+            case 'container:remove': {
+                const result = await this.#dockerCommands?.containerRemove(obj.message.id);
                 this.sendTo(obj.from, obj.command, { result }, obj.callback);
                 break;
             }
             case 'container:logs': {
-                const logs = await this.#dockerCommands?.containerLogs(obj.message.id);
-                this.sendTo(obj.from, obj.command, { logs }, obj.callback);
+                const result = await this.#dockerCommands?.containerLogs(obj.message.id);
+                this.sendTo(obj.from, obj.command, { result }, obj.callback);
                 break;
             }
             default:
                 this.log.warn(`Unknown command: ${obj.command}`);
                 break;
         }
-
-        this.log.debug(`Handle message ${obj.command} ${obj.command !== 'getLicense' ? JSON.stringify(obj) : ''}`);
     }
 }
 
