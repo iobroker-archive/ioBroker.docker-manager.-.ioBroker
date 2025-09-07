@@ -284,6 +284,37 @@ export default class DockerCommands {
         }
     }
 
+    async imageNameAutocomplete(partialName: string): Promise<
+        {
+            name: string;
+            description: string;
+            isOfficial: boolean;
+            starCount: number;
+        }[]
+    > {
+        try {
+            // Read stars and descriptions
+            const { stdout } = await this.#exec(
+                `search ${partialName} --format "{{.Name}};{{.Description}};{{.IsOfficial}};{{.StarCount}}" --limit 50`,
+            );
+            return stdout
+                .split('\n')
+                .filter(line => line.trim() !== '')
+                .map(line => {
+                    const [name, description, isOfficial, starCount] = line.split(';');
+                    return {
+                        name,
+                        description,
+                        isOfficial: isOfficial === 'true',
+                        starCount: parseInt(starCount, 10) || 0,
+                    };
+                });
+        } catch (e) {
+            this.#adapter.log.debug(`Cannot search images: ${e.message}`);
+            return [];
+        }
+    }
+
     async containerRun(image: ImageName, config: ContainerConfig): Promise<{ stdout: string; stderr: string }> {
         try {
             const result = await this.#exec(`run ${this.#toDockerRun({ ...config, image })}`);

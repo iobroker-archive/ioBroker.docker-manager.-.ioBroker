@@ -1,7 +1,8 @@
 import { type AdapterOptions, Adapter } from '@iobroker/adapter-core';
-import type { DockerManagerAdapterConfig, GUIResponse } from './types';
+import type { DockerImageTagsResponse, DockerManagerAdapterConfig, GUIResponse } from './types';
 
 import DockerCommands from './lib/DockerCommands';
+import axios from 'axios';
 
 export class DockerManagerAdapter extends Adapter {
     declare config: DockerManagerAdapterConfig;
@@ -175,6 +176,14 @@ export class DockerManagerAdapter extends Adapter {
         callback();
     }
 
+    async #listImageTags(image: string): Promise<DockerImageTagsResponse['results']> {
+        const response = await axios(`https://hub.docker.com/v2/repositories/${image}/tags/?page_size=100`);
+        if (response.status !== 200) {
+            throw new Error(`Cannot get tags for image ${image}: ${response.statusText}`);
+        }
+        return response.data.results;
+    }
+
     async #onMessage(obj: ioBroker.Message): Promise<void> {
         if (obj.command?.startsWith('dm:')) {
             // Handled by Device Manager class itself, so ignored here
@@ -183,6 +192,16 @@ export class DockerManagerAdapter extends Adapter {
         this.log.debug(`Handle message ${obj.command} ${JSON.stringify(obj)}`);
 
         switch (obj.command) {
+            case 'image:autocomplete': {
+                const result = await this.#dockerCommands?.imageNameAutocomplete(obj.message.image);
+                this.sendTo(obj.from, obj.command, { result }, obj.callback);
+                break;
+            }
+            case 'image:tags': {
+                const result = await this.#listImageTags(obj.message.image);
+                this.sendTo(obj.from, obj.command, { result }, obj.callback);
+                break;
+            }
             case 'image:pull': {
                 const result = await this.#dockerCommands?.imagePull(obj.message.image);
                 this.sendTo(obj.from, obj.command, { result }, obj.callback);

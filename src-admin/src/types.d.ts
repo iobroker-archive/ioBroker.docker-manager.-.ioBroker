@@ -27,17 +27,16 @@ export type DockerContainerInspect = {
     Platform: string;
     MountLabel: string;
     ProcessLabel: string;
-    // eslint-disable-next-line @typescript-eslint/no-redundant-type-constituents
-    AppArmorProfile: 'unconfined' | 'docker-default' | string;
+    AppArmorProfile: string;
     ExecIDs: null | string[];
     HostConfig: {
         Binds: string[];
         ContainerIDFile: string;
         LogConfig: {
-            Type: LogDriver;
-            Config: Record<string, string>;
+            Type: string;
+            Config: Record<string, unknown>;
         };
-        NetworkMode: NetworkMode;
+        NetworkMode: string;
         PortBindings: Record<
             string,
             Array<{
@@ -61,11 +60,11 @@ export type DockerContainerInspect = {
         DnsSearch: string[];
         ExtraHosts: null | string[];
         GroupAdd: null | string[];
-        IpcMode: 'none' | 'host';
+        IpcMode: string;
         Cgroup: string;
         Links: null | string[];
         OomScoreAdj: number;
-        PidMode?: 'host';
+        PidMode: string;
         Privileged: boolean;
         PublishAllPorts: boolean;
         ReadonlyRootfs: boolean;
@@ -106,8 +105,6 @@ export type DockerContainerInspect = {
         IOMaximumBandwidth: number;
         MaskedPaths: string[];
         ReadonlyPaths: string[];
-        Sysctls?: Record<string, string>;
-        Init?: boolean;
     };
     GraphDriver: {
         Data: {
@@ -120,11 +117,11 @@ export type DockerContainerInspect = {
         Name: string;
     };
     Mounts: Array<{
-        Type: 'bind' | 'volume' | 'tmpfs' | 'npipe';
+        Type: string;
         Source: string;
         Destination: string;
         Mode: string;
-        RW?: boolean;
+        RW: boolean;
         Propagation: string;
     }>;
     Config: {
@@ -146,8 +143,6 @@ export type DockerContainerInspect = {
         Entrypoint: string[];
         OnBuild: null | string[];
         Labels: Record<string, string>;
-        StopSignal?: string;
-        StopTimeout?: number;
     };
     NetworkSettings: {
         Bridge: string;
@@ -448,9 +443,13 @@ export interface HostMapping {
 
 // The master container configuration you can use in your manager:
 export interface ContainerConfig {
-    enabled?: boolean;
+    /** If false, container is not started, but still visible in the list */
+    enabled?: boolean; // ioBroker setting
 
-    /** Image reference (repo:tag or ID). If omitted and build is set, image comes from build */
+    /** If true, container is stopped when adapter unloads */
+    stopOnUnload?: boolean; // ioBroker setting
+
+    /** Image reference (repo:tag or ID). If omitted and build is set, the image comes from build */
     image: string;
 
     /** Compose-style build (optional) */
@@ -559,7 +558,7 @@ export interface ContainerConfig {
 }
 
 export interface DockerManagerAdapterConfig {
-    containers: ContainerConfig[];
+    containers?: ContainerConfig[];
 }
 
 export type SizeInfo = {
@@ -647,3 +646,39 @@ export type GUIRequestContainer = {
 };
 
 export type GUIRequest = GUIRequestInfo | GUIRequestImages | GUIRequestContainers | GUIRequestContainer;
+
+export type DockerImageTagsResponse = {
+    count: number;
+    next: string | null;
+    previous: string | null;
+    results: {
+        creator: number;
+        id: number;
+        images: {
+            architecture: string;
+            features: string;
+            variant: string | null;
+            digest: string;
+            os: string;
+            os_features: string;
+            os_version: string | null;
+            size: number;
+            status: string;
+            last_pulled: string;
+            last_pushed: string;
+        }[];
+        last_updated: string;
+        last_updater: number;
+        last_updater_username: string;
+        name: string;
+        repository: number;
+        full_size: number;
+        v2: boolean;
+        tag_status: string;
+        tag_last_pulled: string;
+        tag_last_pushed: string;
+        media_type: string;
+        content_type: string;
+        digest: string;
+    }[];
+};

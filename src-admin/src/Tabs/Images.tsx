@@ -17,6 +17,11 @@ import {
     IconButton,
     CircularProgress,
     Snackbar,
+    Autocomplete,
+    InputLabel,
+    Select,
+    MenuItem,
+    FormControl,
 } from '@mui/material';
 
 import { type AdminConnection, I18n, InfoBox } from '@iobroker/adapter-react-v5';
@@ -29,7 +34,7 @@ import {
     Info as InfoIcon,
 } from '@mui/icons-material';
 
-import type { ContainerInfo, ImageInfo, DockerImageInspect } from '../types';
+import type { ContainerInfo, ImageInfo, DockerImageInspect, DockerImageTagsResponse } from '../types';
 import { size2string } from '../Components/utils';
 
 interface ImagesTabProps {
@@ -49,9 +54,15 @@ interface ImagesTabState {
     showHint: string;
     showError: string;
     dockerInspect: DockerImageInspect | null;
+    imagesTags: Record<string, DockerImageTagsResponse['results'] | null>;
+    imageAutocomplete: {
+        [text: string]: { name: string; description: string; isOfficial: boolean; starCount: number }[];
+    };
 }
 
 export default class ImagesTab extends Component<ImagesTabProps, ImagesTabState> {
+    private autoCompleteTimer?: ReturnType<typeof setTimeout>;
+
     constructor(props: ImagesTabProps) {
         super(props);
         this.state = {
@@ -63,7 +74,16 @@ export default class ImagesTab extends Component<ImagesTabProps, ImagesTabState>
             showHint: '',
             showError: '',
             dockerInspect: null,
+            imagesTags: {},
+            imageAutocomplete: {},
         };
+    }
+
+    componentDidMount(): void {
+        if (this.autoCompleteTimer) {
+            clearTimeout(this.autoCompleteTimer);
+            this.autoCompleteTimer = undefined;
+        }
     }
 
     renderAddDialog(): React.JSX.Element | null {
@@ -73,25 +93,119 @@ export default class ImagesTab extends Component<ImagesTabProps, ImagesTabState>
         return (
             <Dialog
                 open={!0}
+                fullWidth
+                maxWidth="sm"
+                sx={{
+                    '& .MuiDialog-paper': {
+                        overflow: 'visible',
+                    },
+                }}
                 onClose={() => this.setState({ showAddDialog: false })}
             >
                 <DialogTitle>{I18n.t('Pull new image')}</DialogTitle>
                 <DialogContent>
-                    <TextField
-                        variant="standard"
-                        value={this.state.addImageName}
-                        onChange={e => this.setState({ addImageName: e.target.value })}
-                        label={I18n.t('Image name')}
+                    <Autocomplete
                         fullWidth
+                        disablePortal
+                        options={this.state.imageAutocomplete[this.state.addImageName] || []}
+                        renderInput={params => (
+                            <TextField
+                                {...params}
+                                variant="standard"
+                                label={I18n.t('Image name')}
+                            />
+                        )}
+                        renderOption={(props, option) => (
+                            <li
+                                {...props}
+                                key={option.name}
+                                style={{
+                                    display: 'flex',
+                                    flexDirection: 'column',
+                                    alignItems: 'flex-start',
+                                    gap: 4,
+                                }}
+                            >
+                                <div style={{ position: 'relative' }}>
+                                    {option.isOfficial ? (
+                                        <Tooltip
+                                            title={I18n.t('Official image')}
+                                            slotProps={{ popper: { sx: { pointerEvents: 'none' } } }}
+                                        >
+                                            <InfoIcon
+                                                style={{ color: 'green', position: 'absolute', top: 0, right: 0 }}
+                                            />
+                                        </Tooltip>
+                                    ) : null}
+                                    <span>{option.name}</span>
+                                    {option.starCount ? ` (${option.starCount} ★)` : ''}
+                                </div>
+                                <div style={{ fontSize: 'smaller', opacity: 0.7, fontStyle: 'italic' }}>
+                                    {option.description}
+                                </div>
+                            </li>
+                        )}
+                        slotProps={{
+                            listbox: { style: { overflow: 'auto' } },
+                        }}
+                        noOptionsText={I18n.t('No images found')}
+                        loadingText={I18n.t('Loading...')}
+                        getOptionLabel={option => (typeof option === 'object' ? option.name : option)}
+                        onInputChange={(_, value, reason) => {
+                            if (reason === 'input') {
+                                this.setState({ addImageName: value });
+                                void this.autocompleteImageName(value);
+                            }
+                        }}
+                        onChange={(_, value) => {
+                            this.setState({
+                                addImageName: value ? (typeof value === 'object' ? value.name : value) : '',
+                            });
+                            if (typeof value === 'object' && value) {
+                                void this.readImageTags(value.name).then(tags =>
+                                    this.setState({
+                                        imagesTags: { ...this.state.imagesTags, [value.name]: tags },
+                                    }),
+                                );
+                            }
+                        }}
+                        value={
+                            this.state.imageAutocomplete[this.state.addImageName]?.find(
+                                item => item.name === this.state.addImageName,
+                            ) || null
+                        }
+                        freeSolo
                     />
-                    <TextField
-                        variant="standard"
-                        placeholder="latest"
-                        value={this.state.addImageTag}
-                        onChange={e => this.setState({ addImageTag: e.target.value })}
-                        label={I18n.t('Image tag')}
-                        fullWidth
-                    />
+                    {this.state.addImageName ? (
+                        <FormControl
+                            fullWidth
+                            variant="standard"
+                        >
+                            <InputLabel>{I18n.t('Image tag')}</InputLabel>
+                            <Select
+                                disabled={this.state.requesting}
+                                variant="standard"
+                                value={this.state.addImageTag || ''}
+                                onChange={e => this.setState({ addImageTag: e.target.value })}
+                            >
+                                {!this.state.imagesTags[this.state.addImageName]?.find(it => it.name === 'latest') ? (
+                                    <MenuItem value="latest">latest</MenuItem>
+                                ) : null}
+                                {this.state.imagesTags[this.state.addImageName]?.map(tag => (
+                                    <MenuItem
+                                        key={tag.name}
+                                        value={tag.name}
+                                        style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-start' }}
+                                    >
+                                        <div style={{ fontWeight: 'bold' }}>{tag.name}</div>
+                                        <div style={{ fontSize: 'smaller', opacity: 0.7, fontStyle: 'italic' }}>
+                                            {I18n.t('updated')}: {new Date(tag.last_updated).toLocaleString()}
+                                        </div>
+                                    </MenuItem>
+                                ))}
+                            </Select>
+                        </FormControl>
+                    ) : null}
                 </DialogContent>
                 <DialogActions>
                     <Button
@@ -229,6 +343,45 @@ export default class ImagesTab extends Component<ImagesTabProps, ImagesTabState>
                 }
             />
         );
+    }
+
+    async readImageTags(image: string): Promise<DockerImageTagsResponse['results'] | null> {
+        const result: {
+            result: DockerImageTagsResponse['results'];
+        } = await this.props.socket.sendTo(`docker-manager.${this.props.instance}`, 'image:tags', {
+            image,
+        });
+        return result?.result || null;
+    }
+
+    autocompleteImageName(imagePart: string): void {
+        if (this.autoCompleteTimer) {
+            clearTimeout(this.autoCompleteTimer);
+        }
+
+        this.autoCompleteTimer = setTimeout(async () => {
+            this.autoCompleteTimer = undefined;
+
+            const autoComplete: {
+                result: {
+                    name: string;
+                    description: string;
+                    isOfficial: boolean;
+                    starCount: number;
+                }[];
+            } = await this.props.socket.sendTo(`docker-manager.${this.props.instance}`, 'image:autocomplete', {
+                image: imagePart,
+            });
+
+            if (autoComplete.result) {
+                this.setState({
+                    imageAutocomplete: {
+                        ...this.state.imageAutocomplete,
+                        [imagePart]: autoComplete ? autoComplete.result : [],
+                    },
+                });
+            }
+        }, 300);
     }
 
     renderErrorDialog(): React.JSX.Element | null {
