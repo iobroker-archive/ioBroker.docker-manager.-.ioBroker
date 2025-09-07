@@ -200,7 +200,7 @@ export default class CreateContainerDialog extends Component<CreateContainerDial
                         onClick={() => this.props.onClose(this.state.config, true)}
                         startIcon={this.props.requesting ? <CircularProgress size={24} /> : <AddIcon />}
                     >
-                        {I18n.t('Create asn run')}
+                        {I18n.t('Create and run')}
                     </Button>
                     <Button
                         disabled={

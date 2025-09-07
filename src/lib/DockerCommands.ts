@@ -58,10 +58,47 @@ export default class DockerCommands {
         this.#installed = !!version;
         if (version) {
             this.#dockerVersion = version;
+        } else {
+            const daemonRunning = await this.#isDockerDaemonRunning();
+            if (daemonRunning) {
+                // Docker daemon is running, but docker command not found
+                this.#adapter.log.warn(
+                    'Docker daemon is running, but docker command not found. May be "iobroker" user has no access to Docker. Run "iob fix" command to fix it.',
+                );
+            } else {
+                this.#adapter.log.warn('Docker is not installed. Please install Docker.');
+            }
         }
         if (this.#installed) {
             this.#needSudo = await this.#isNeedSudo();
             await this.#checkOwnContainers();
+        }
+    }
+
+    async #isDockerDaemonRunning(): Promise<boolean> {
+        try {
+            const { stdout, stderr } = await execPromise('systemctl status docker');
+            // ● docker.service - Docker Application Container Engine
+            //      Loaded: loaded (/lib/systemd/system/docker.service; enabled; preset: enabled)
+            //      Active: active (running) since Fri 2025-08-15 08:37:22 CEST; 3 weeks 2 days ago
+            // TriggeredBy: ● docker.socket
+            //        Docs: https://docs.docker.com
+            //    Main PID: 785 (dockerd)
+            //       Tasks: 30
+            //         CPU: 4min 17.003s
+            //      CGroup: /system.slice/docker.service
+            //              ├─  785 /usr/bin/dockerd -H fd:// --containerd=/run/containerd/containerd.sock
+            //              ├─97032 /usr/bin/docker-proxy -proto tcp -host-ip 0.0.0.0 -host-port 5000 -container-ip 172.17.0.2 -container-port 5000 -use-listen-fd
+            //              └─97039 /usr/bin/docker-proxy -proto tcp -host-ip :: -host-port 5000 -container-ip 172.17.0.2 -container-port 5000 -use-listen-fd
+            if (stderr?.includes('could not be found') || stderr.includes('not-found')) {
+                this.#adapter.log.error(`Docker is not installed: ${stderr}`);
+                return false;
+            }
+            this.#adapter.log.error(`Docker daemon is not running`);
+
+            return stdout.includes('(running)');
+        } catch {
+            return false;
         }
     }
 

@@ -19,7 +19,7 @@ import {
     Snackbar,
 } from '@mui/material';
 
-import { type AdminConnection, I18n } from '@iobroker/adapter-react-v5';
+import { type AdminConnection, I18n, InfoBox } from '@iobroker/adapter-react-v5';
 import {
     Add as AddIcon,
     Delete as DeleteIcon,
@@ -294,16 +294,27 @@ export default class ImagesTab extends Component<ImagesTabProps, ImagesTabState>
 
     render(): React.JSX.Element {
         return (
-            <Paper style={{ width: '100%', height: '100%' }}>
+            <Paper style={{ width: 'calc(100% - 8px)', height: 'calc(100% - 8px)', padding: 4 }}>
                 {this.renderAddDialog()}
                 {this.renderConfirmDialog()}
                 {this.renderErrorDialog()}
                 {this.renderSnackbar()}
                 {this.renderInspect()}
-                <div>Explanation about images</div>
+                <InfoBox
+                    type="info"
+                    closeable
+                    storeId="docker-manager.image"
+                    iconPosition="top"
+                >
+                    {I18n.t('Image explanation')
+                        .split('\n')
+                        .map((line, i) => (
+                            <div key={i.toString()}>{line}</div>
+                        ))}
+                </InfoBox>
                 <Table size="small">
                     <TableHead>
-                        <TableRow>
+                        <TableRow style={{ backgroundColor: 'rgba(0, 0, 0, 0.2)' }}>
                             <TableCell style={{ fontWeight: 'bold' }}>
                                 <Tooltip
                                     title={I18n.t('Add new image')}

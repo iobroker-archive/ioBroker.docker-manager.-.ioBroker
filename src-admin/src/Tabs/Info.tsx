@@ -1,7 +1,7 @@
 import React from 'react';
 import { Paper, Table, TableRow, TableHead, TableBody, TableCell } from '@mui/material';
 
-import { type AdminConnection, I18n } from '@iobroker/adapter-react-v5';
+import { type AdminConnection, I18n, InfoBox } from '@iobroker/adapter-react-v5';
 import type { DiskUsage } from '../types';
 import { size2string } from '../Components/utils';
 
@@ -15,7 +15,19 @@ interface InfoTabProps {
 
 export default function InfoTab(props: InfoTabProps): React.JSX.Element {
     return (
-        <Paper style={{ width: '100%', height: '100%' }}>
+        <Paper style={{ width: 'calc(100% - 8px)', height: 'calc(100% - 8px)', padding: 4 }}>
+            <InfoBox
+                type="info"
+                closeable
+                storeId="docker-manager.docker"
+                iconPosition="top"
+            >
+                {I18n.t('Docker explanation')
+                    .split('\n')
+                    .map((line, i) => (
+                        <div key={i.toString()}>{line}</div>
+                    ))}
+            </InfoBox>
             <div>
                 <div>
                     {I18n.t('Version')}: {props.version || '--'}
@@ -24,12 +36,12 @@ export default function InfoTab(props: InfoTabProps): React.JSX.Element {
             </div>
             <Table size="small">
                 <TableHead>
-                    <TableRow>
-                        <TableCell>{I18n.t('Type')}</TableCell>
-                        <TableCell>{I18n.t('Total')}</TableCell>
-                        <TableCell>{I18n.t('Active')}</TableCell>
-                        <TableCell>{I18n.t('Size')}</TableCell>
-                        <TableCell>{I18n.t('Reclaimable')}</TableCell>
+                    <TableRow style={{ backgroundColor: 'rgba(0, 0, 0, 0.2)' }}>
+                        <TableCell style={{ fontWeight: 'bold' }}>{I18n.t('Type')}</TableCell>
+                        <TableCell style={{ fontWeight: 'bold' }}>{I18n.t('Total')}</TableCell>
+                        <TableCell style={{ fontWeight: 'bold' }}>{I18n.t('Active')}</TableCell>
+                        <TableCell style={{ fontWeight: 'bold' }}>{I18n.t('Size')}</TableCell>
+                        <TableCell style={{ fontWeight: 'bold' }}>{I18n.t('Reclaimable')}</TableCell>
                     </TableRow>
                 </TableHead>
                 <TableBody>

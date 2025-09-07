@@ -22,3 +22,4 @@ build
 .vscode
 /src-admin/node_modules/
 /src-admin/build/
+/src-admin/collectI18n.js

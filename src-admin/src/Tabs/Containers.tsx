@@ -1,5 +1,5 @@
 import React, { Component } from 'react';
-import { type AdminConnection, I18n, type IobTheme, type ThemeType } from '@iobroker/adapter-react-v5';
+import { type AdminConnection, I18n, InfoBox, type IobTheme, type ThemeType } from '@iobroker/adapter-react-v5';
 import {
     Button,
     CircularProgress,
@@ -586,7 +586,7 @@ export default class ContainersTab extends Component<ContainersTabProps, Contain
 
     render(): React.JSX.Element {
         return (
-            <Paper style={{ width: '100%', height: '100%' }}>
+            <Paper style={{ width: 'calc(100% - 8px)', height: 'calc(100% - 8px)', padding: 4 }}>
                 {this.renderAddDialog()}
                 {this.renderConfirmDeleteDialog()}
                 {this.renderConfirmRestartDialog()}
@@ -596,10 +596,21 @@ export default class ContainersTab extends Component<ContainersTabProps, Contain
                 {this.renderInspect()}
                 {this.renderLogs()}
                 {this.renderExecDialog()}
-                <div>Explanation about images</div>
+                <InfoBox
+                    type="info"
+                    closeable
+                    storeId="docker-manager.container"
+                    iconPosition="top"
+                >
+                    {I18n.t('Container explanation')
+                        .split('\n')
+                        .map((line, i) => (
+                            <div key={i.toString()}>{line}</div>
+                        ))}
+                </InfoBox>
                 <Table size="small">
                     <TableHead>
-                        <TableRow>
+                        <TableRow style={{ backgroundColor: 'rgba(0, 0, 0, 0.2)' }}>
                             <TableCell>
                                 <Tooltip
                                     title={I18n.t('Add new container')}
