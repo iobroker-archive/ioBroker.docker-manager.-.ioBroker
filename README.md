@@ -54,7 +54,7 @@ In ioBroker notation, it is like an instance of an adapter.
 -->
 
 ## Changelog
-### 0.0.2 (2025-09-07)
+### **WORK IN PROGRESS**
 
 - (@GermanBluefox) Initial commit
 

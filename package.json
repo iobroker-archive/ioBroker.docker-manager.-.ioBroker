@@ -37,8 +37,7 @@
     "typescript": "~5.9.2"
   },
   "os": [
-    "linux",
-    "win32"
+    "linux"
   ],
   "bugs": {
     "url": "https://github.com/ioBroker/ioBroker.docker-manager/issues"
