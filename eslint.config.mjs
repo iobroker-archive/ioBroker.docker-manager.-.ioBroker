@@ -23,6 +23,7 @@ export default [
             'tasks.js',
             'tmp/**/*',
             '.**/*',
+            'src-admin/collectI18n.js',
         ],
     },
     {

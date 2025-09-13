@@ -33,10 +33,10 @@ export type DockerContainerInspect = {
         Binds: string[];
         ContainerIDFile: string;
         LogConfig: {
-            Type: string;
-            Config: Record<string, unknown>;
+            Type: 'json-file' | 'local' | 'syslog' | 'journald' | 'gelf' | 'fluentd' | 'awslogs' | 'splunk' | 'none';
+            Config: Record<string, string>;
         };
-        NetworkMode: string;
+        NetworkMode: 'bridge' | 'host' | 'none' | 'container';
         PortBindings: Record<
             string,
             Array<{
@@ -60,11 +60,11 @@ export type DockerContainerInspect = {
         DnsSearch: string[];
         ExtraHosts: null | string[];
         GroupAdd: null | string[];
-        IpcMode: string;
+        IpcMode: 'none' | 'host';
         Cgroup: string;
         Links: null | string[];
         OomScoreAdj: number;
-        PidMode: string;
+        PidMode: 'host';
         Privileged: boolean;
         PublishAllPorts: boolean;
         ReadonlyRootfs: boolean;
@@ -105,6 +105,9 @@ export type DockerContainerInspect = {
         IOMaximumBandwidth: number;
         MaskedPaths: string[];
         ReadonlyPaths: string[];
+        /** Sysctls (e.g. net.core.somaxconn=1024) */
+        Sysctls?: Record<string, string>; // --sysctl
+        Init?: boolean;
     };
     GraphDriver: {
         Data: {
@@ -117,7 +120,7 @@ export type DockerContainerInspect = {
         Name: string;
     };
     Mounts: Array<{
-        Type: string;
+        Type: 'bind' | 'volume' | 'tmpfs' | 'npipe';
         Source: string;
         Destination: string;
         Mode: string;
@@ -143,6 +146,10 @@ export type DockerContainerInspect = {
         Entrypoint: string[];
         OnBuild: null | string[];
         Labels: Record<string, string>;
+        // eslint-disable-next-line @typescript-eslint/no-redundant-type-constituents
+        StopSignal?: 'SIGTERM' | 'SIGKILL' | string; // e.g. "SIGTERM"
+        /** --stop-timeout (seconds) */
+        StopTimeout?: number;
     };
     NetworkSettings: {
         Bridge: string;
@@ -430,7 +437,8 @@ export interface Restart {
 
 export interface StopConfig {
     /** --stop-signal */
-    signal?: string; // e.g. "SIGTERM"
+    // eslint-disable-next-line @typescript-eslint/no-redundant-type-constituents
+    signal?: 'SIGTERM' | 'SIGKILL' | string; // e.g. "SIGTERM"
     /** --stop-timeout (seconds) */
     gracePeriodSec?: number;
 }
