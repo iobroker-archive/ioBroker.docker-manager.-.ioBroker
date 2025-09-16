@@ -335,6 +335,7 @@ export default class App extends GenericApp<GenericAppProps, AppState> {
                 instance={this.instance}
                 images={this.state.images}
                 containers={this.state.containers}
+                themeType={this.state.themeType}
             />
         );
     }

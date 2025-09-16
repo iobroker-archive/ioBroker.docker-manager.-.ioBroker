@@ -655,7 +655,22 @@ export default class ContainersTab extends Component<ContainersTabProps, Contain
                             <TableRow key={container.id}>
                                 <TableCell>{container.id || '--'}</TableCell>
                                 <TableCell>{container.names || '--'}</TableCell>
-                                <TableCell>{container.image || '--'}</TableCell>
+                                <TableCell>
+                                    {container.image ? (
+                                        <a
+                                            href={`https://hub.docker.com/r/${container.image.split(':')[0]}`}
+                                            target="_blank"
+                                            rel="noreferrer"
+                                            style={{
+                                                color: this.props.themeType === 'dark' ? '#4da6ff' : '#0066ff',
+                                            }}
+                                        >
+                                            {container.image}
+                                        </a>
+                                    ) : (
+                                        '--'
+                                    )}
+                                </TableCell>
                                 <TableCell>{container.command || '--'}</TableCell>
                                 <TableCell>
                                     {container.createdAt

@@ -24,7 +24,7 @@ import {
     FormControl,
 } from '@mui/material';
 
-import { type AdminConnection, I18n, InfoBox } from '@iobroker/adapter-react-v5';
+import { type AdminConnection, I18n, InfoBox, type ThemeType } from '@iobroker/adapter-react-v5';
 import {
     Add as AddIcon,
     Delete as DeleteIcon,
@@ -43,6 +43,7 @@ interface ImagesTabProps {
     instance: number;
     images: ImageInfo[] | undefined;
     containers: ContainerInfo[] | undefined;
+    themeType: ThemeType;
 }
 
 interface ImagesTabState {
@@ -499,7 +500,20 @@ export default class ImagesTab extends Component<ImagesTabProps, ImagesTabState>
                         {this.props.images?.map(image => (
                             <TableRow key={image.id}>
                                 <TableCell style={{ fontWeight: 'bold', fontSize: '1rem' }}>
-                                    {image.repository || '--'}
+                                    {image.repository ? (
+                                        <a
+                                            href={`https://hub.docker.com/r/${image.repository}`}
+                                            target="_blank"
+                                            rel="noreferrer"
+                                            style={{
+                                                color: this.props.themeType === 'dark' ? '#4da6ff' : '#0066ff',
+                                            }}
+                                        >
+                                            {image.repository}
+                                        </a>
+                                    ) : (
+                                        '--'
+                                    )}
                                 </TableCell>
                                 <TableCell style={{ fontStyle: 'italic' }}>{image.tag || '--'}</TableCell>
                                 <TableCell>{image.id || '--'}</TableCell>
