@@ -54,7 +54,7 @@ In ioBroker notation, it is like an instance of an adapter.
 -->
 
 ## Changelog
-### **WORK IN PROGRESS**
+### 0.1.0 (2025-09-17)
 
 - (@GermanBluefox) Added network tab
 

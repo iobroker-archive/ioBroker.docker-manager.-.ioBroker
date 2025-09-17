@@ -1,8 +1,21 @@
 {
   "common": {
     "name": "docker-manager",
-    "version": "0.0.3",
+    "version": "0.1.0",
     "news": {
+      "0.1.0": {
+        "en": "Added network tab",
+        "de": "Hinzufügen des Netzwerk-Tabellenreiters",
+        "ru": "Добавлена вкладка сети",
+        "pt": "Adicionada aba de rede",
+        "nl": "Toegevoegd netwerk-tabblad",
+        "fr": "Ajouté l'onglet réseau",
+        "it": "Aggiunta scheda di rete",
+        "es": "Añadida pestaña de red",
+        "pl": "Dodano zakładkę sieciową",
+        "uk": "Додано вкладку мережі",
+        "zh-cn": "添加了网络选项卡"
+      },
       "0.0.3": {
         "en": "Initial commit",
         "de": "Erster Commit",
