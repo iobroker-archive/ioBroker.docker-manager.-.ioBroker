@@ -4,7 +4,7 @@ import { Add as AddIcon, Close as CloseIcon } from '@mui/icons-material';
 
 import { type AdminConnection, I18n, type IobTheme, type ThemeType } from '@iobroker/adapter-react-v5';
 
-import type { ContainerConfig, ContainerInfo, ImageInfo } from '../../types';
+import type { ContainerConfig, ContainerInfo, ImageInfo, NetworkInfo } from '../../dockerManager.types';
 import MainTab, { validateConfig as validateConfigMain } from './MainTab';
 import NetworkTab, { validateConfig as validateConfigNetwork } from './NetworkTab';
 import VolumeTab, { validateConfig as validateConfigVolume } from './VolumeTab';
@@ -14,6 +14,7 @@ import SecurityTab, { validateConfig as validateConfigSecurity } from './Securit
 interface CreateContainerDialogProps {
     images: ImageInfo[] | undefined;
     containers: ContainerInfo[];
+    networks: NetworkInfo[];
     config?: ContainerConfig;
     onClose: (config?: ContainerConfig, isRun?: boolean) => void;
     requesting: boolean;
@@ -155,6 +156,7 @@ export default class CreateContainerDialog extends Component<CreateContainerDial
                         {this.state.addImageTab === 'network' ? (
                             <NetworkTab
                                 containers={this.props.containers}
+                                networks={this.props.networks}
                                 config={this.state.config}
                                 requesting={!!this.props.requesting}
                                 onChange={config => this.setState({ config })}

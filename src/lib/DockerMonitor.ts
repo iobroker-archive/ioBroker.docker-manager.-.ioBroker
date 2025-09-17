@@ -8,7 +8,15 @@ import { lookup } from 'node:dns/promises';
 import http from 'node:http';
 import type { ChildProcessWithoutNullStreams } from 'child_process';
 
-import type { ContainerConfig, ContainerInfo, ImageInfo, NetworkDriver, NetworkInfo } from './dockerManager.types';
+import type {
+    ContainerConfig,
+    ContainerInfo,
+    ImageInfo,
+    NetworkDriver,
+    NetworkInfo,
+    VolumeDriver,
+    VolumeInfo,
+} from './dockerManager.types';
 import { inRange, isIP } from 'range_check';
 import DockerManager from './DockerManager';
 import type { DockerManagerAdapter } from '../main';
@@ -74,6 +82,7 @@ export default class DockerMonitor extends DockerManager {
         containers?: ReturnType<typeof setInterval>;
         info?: ReturnType<typeof setInterval>;
         networks?: ReturnType<typeof setInterval>;
+        volumes?: ReturnType<typeof setInterval>;
         container: { [key: string]: ReturnType<typeof setInterval> };
     } = {
         container: {},
@@ -395,7 +404,7 @@ export default class DockerMonitor extends DockerManager {
         });
     }
 
-    async networkCreat(
+    async networkCreate(
         networkName: string,
         driver?: NetworkDriver,
     ): Promise<{ stdout: string; stderr: string; networks?: NetworkInfo[] }> {
@@ -420,6 +429,40 @@ export default class DockerMonitor extends DockerManager {
                 await this.#adapter.sendToGui({
                     command: 'networks',
                     data: result.networks,
+                });
+            }
+            return result;
+        } catch (e) {
+            return { stdout: '', stderr: e.message.toString() };
+        }
+    }
+
+    async volumeCreate(
+        volumeName: string,
+        driver?: VolumeDriver,
+        volume?: string,
+    ): Promise<{ stdout: string; stderr: string; volumes?: VolumeInfo[] }> {
+        try {
+            const result = await super.volumeCreate(volumeName, driver, volume);
+            if (result.volumes) {
+                await this.#adapter.sendToGui({
+                    command: 'volumes',
+                    data: result.volumes,
+                });
+            }
+            return result;
+        } catch (e) {
+            return { stdout: '', stderr: e.message.toString() };
+        }
+    }
+
+    async volumeRemove(volumeName: string): Promise<{ stdout: string; stderr: string; volumes?: VolumeInfo[] }> {
+        try {
+            const result = await super.volumeRemove(volumeName);
+            if (result.volumes) {
+                await this.#adapter.sendToGui({
+                    command: 'volumes',
+                    data: result.volumes,
                 });
             }
             return result;
@@ -477,6 +520,22 @@ export default class DockerMonitor extends DockerManager {
         });
     }
 
+    async #pollingVolumes(): Promise<void> {
+        await this.isReady();
+        if (!this.installed) {
+            await this.#adapter.sendToGui({
+                command: 'volumes',
+                error: 'not installed',
+            });
+            return;
+        }
+        const data = await this.volumeList();
+        await this.#adapter.sendToGui({
+            command: 'volumes',
+            data,
+        });
+    }
+
     async #pollingContainers(): Promise<void> {
         await this.isReady();
         if (!this.installed) {
@@ -515,6 +574,7 @@ export default class DockerMonitor extends DockerManager {
         containers: string[];
         info: number;
         networks: number;
+        volumes: number;
         container: string[];
     }): Promise<void> {
         if (scan.info) {
@@ -543,6 +603,16 @@ export default class DockerMonitor extends DockerManager {
         } else if (this.#timers.networks) {
             clearInterval(this.#timers.networks);
             this.#timers.networks = undefined;
+        }
+
+        if (scan.volumes) {
+            this.#timers.volumes ||= setInterval(async () => {
+                await this.#pollingVolumes();
+            }, 10_000);
+            setTimeout(() => void this.#pollingVolumes(), 50); // do it immediately, too
+        } else if (this.#timers.volumes) {
+            clearInterval(this.#timers.volumes);
+            this.#timers.volumes = undefined;
         }
 
         if (scan.containers) {
@@ -601,6 +671,10 @@ export default class DockerMonitor extends DockerManager {
         if (this.#timers.images) {
             clearInterval(this.#timers.images);
             delete this.#timers.images;
+        }
+        if (this.#timers.volumes) {
+            clearInterval(this.#timers.volumes);
+            delete this.#timers.volumes;
         }
         if (this.#timers.networks) {
             clearInterval(this.#timers.networks);

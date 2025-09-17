@@ -1,7 +1,7 @@
 import React from 'react';
 import { Checkbox, FormControl, FormControlLabel, InputLabel, MenuItem, Select, TextField } from '@mui/material';
 import { I18n } from '@iobroker/adapter-react-v5';
-import type { ContainerConfig, ContainerInfo, ImageInfo } from '../../types';
+import type { ContainerConfig, ContainerInfo, ImageInfo } from '../../dockerManager.types';
 
 import styles from './styles';
 

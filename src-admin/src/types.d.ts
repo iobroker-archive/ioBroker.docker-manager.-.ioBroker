@@ -17,12 +17,16 @@ export type GUIRequestContainer = {
     type: 'containers';
     container: string;
 };
+export type GUIRequestVolumes = {
+    type: 'volumes';
+};
 
 export type GUIRequest =
     | GUIRequestInfo
     | GUIRequestImages
     | GUIRequestContainers
     | GUIRequestContainer
+    | GUIRequestVolumes
     | GUIRequestNetworks;
 
 export type GUIResponseInfo = {
@@ -52,9 +56,14 @@ export type GUIResponseExec = {
     data: { containerId: string; code?: number | null; stderr: string; stdout: string };
     error?: string;
 };
-export type GUIResponseNetwork = {
+export type GUIResponseNetworks = {
     command: 'networks';
     data?: NetworkInfo[];
+    error?: string;
+};
+export type GUIResponseVolumes = {
+    command: 'volumes';
+    data?: VolumeInfo[];
     error?: string;
 };
 
@@ -64,5 +73,6 @@ export type GUIResponse =
     | GUIResponseImages
     | GUIResponseContainer
     | GUIResponseExec
-    | GUIResponseNetwork
+    | GUIResponseNetworks
+    | GUIResponseVolumes
     | { command: 'stopped' };

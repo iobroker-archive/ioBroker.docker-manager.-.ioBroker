@@ -26,33 +26,35 @@ import {
 import { type AdminConnection, I18n, InfoBox } from '@iobroker/adapter-react-v5';
 import { Add as AddIcon, Delete as DeleteIcon, Warning as AlertIcon, Close as CloseIcon } from '@mui/icons-material';
 
-import type { NetworkInfo, NetworkDriver } from '../dockerManager.types';
+import type { VolumeInfo, NetworkDriver } from '../dockerManager.types';
 
-interface NetworksTabProps {
+interface VolumesTabProps {
     socket: AdminConnection;
     alive: boolean;
     instance: number;
-    networks: NetworkInfo[] | undefined;
+    volumes: VolumeInfo[] | undefined;
 }
 
-interface NetworksTabState {
+interface VolumesTabState {
     showAddDialog: boolean;
     showDeleteDialog: string;
-    addNetworkName: string;
+    addVolumePath: string;
+    addVolumeName: string;
     addNetworkDriver: NetworkDriver | '';
     requesting: boolean;
     showHint: string;
     showError: string;
 }
 
-export default class NetworksTab extends Component<NetworksTabProps, NetworksTabState> {
-    constructor(props: NetworksTabProps) {
+export default class VolumesTab extends Component<VolumesTabProps, VolumesTabState> {
+    constructor(props: VolumesTabProps) {
         super(props);
         this.state = {
             showAddDialog: false,
             showDeleteDialog: '',
-            addNetworkName: '',
+            addVolumeName: '',
             addNetworkDriver: '',
+            addVolumePath: '',
             requesting: false,
             showHint: '',
             showError: '',
@@ -75,13 +77,13 @@ export default class NetworksTab extends Component<NetworksTabProps, NetworksTab
                 }}
                 onClose={() => this.setState({ showAddDialog: false })}
             >
-                <DialogTitle>{I18n.t('Create new network')}</DialogTitle>
+                <DialogTitle>{I18n.t('Create new volume')}</DialogTitle>
                 <DialogContent>
                     <TextField
                         fullWidth
-                        value={this.state.addNetworkName}
-                        onChange={e => this.setState({ addNetworkName: e.target.value })}
-                        label={I18n.t('Network name')}
+                        value={this.state.addVolumeName}
+                        onChange={e => this.setState({ addVolumeName: e.target.value })}
+                        label={I18n.t('Volume name')}
                         variant="standard"
                         disabled={this.state.requesting}
                     />
@@ -102,14 +104,26 @@ export default class NetworksTab extends Component<NetworksTabProps, NetworksTab
                             }
                         >
                             <MenuItem value="">default</MenuItem>
-                            <MenuItem value="bridge">bridge</MenuItem>
-                            <MenuItem value="host">host</MenuItem>
-                            <MenuItem value="overlay">overlay</MenuItem>
-                            <MenuItem value="macvlan">macvlan</MenuItem>
-                            <MenuItem value="none">none</MenuItem>
-                            <MenuItem value="container">container</MenuItem>
+                            <MenuItem value="local">local</MenuItem>
+                            <MenuItem value="tmpfs">tmpfs</MenuItem>
+                            <MenuItem value="nfs">nfs</MenuItem>
+                            <MenuItem value="cifs">cifs</MenuItem>
+                            <MenuItem value="sshfs">sshfs</MenuItem>
+                            <MenuItem value="flocker">flocker</MenuItem>
+                            <MenuItem value="glusterfs">glusterfs</MenuItem>
+                            <MenuItem value="ceph">ceph</MenuItem>
+                            <MenuItem value="rexray">rexray</MenuItem>
+                            <MenuItem value="portworx">portworx</MenuItem>
                         </Select>
                     </FormControl>
+                    <TextField
+                        fullWidth
+                        value={this.state.addVolumePath}
+                        onChange={e => this.setState({ addVolumePath: e.target.value })}
+                        label={I18n.t('Volume path (for drivers that need it)')}
+                        variant="standard"
+                        disabled={this.state.requesting}
+                    />
                 </DialogContent>
                 <DialogActions>
                     <Button
@@ -117,18 +131,19 @@ export default class NetworksTab extends Component<NetworksTabProps, NetworksTab
                         color="primary"
                         disabled={
                             this.state.requesting ||
-                            !this.state.addNetworkName.trim() ||
-                            !!this.props.networks?.find(net => net.name === this.state.addNetworkName.trim())
+                            !this.state.addVolumeName.trim() ||
+                            !!this.props.volumes?.find(v => v.name === this.state.addVolumeName.trim())
                         }
                         onClick={() => {
                             this.setState({ requesting: true }, async () => {
                                 try {
                                     await this.props.socket.sendTo(
                                         `docker-manager.${this.props.instance}`,
-                                        'network:create',
+                                        'volume:create',
                                         {
-                                            name: this.state.addNetworkName,
+                                            name: this.state.addVolumeName,
                                             driver: this.state.addNetworkDriver || undefined,
+                                            volume: this.state.addVolumePath || undefined,
                                         },
                                     );
                                     this.setState({ showAddDialog: false, requesting: false });
@@ -166,9 +181,9 @@ export default class NetworksTab extends Component<NetworksTabProps, NetworksTab
                 open={!0}
                 onClose={() => this.setState({ showDeleteDialog: '' })}
             >
-                <DialogTitle>{I18n.t('Remove network')}</DialogTitle>
+                <DialogTitle>{I18n.t('Remove volume')}</DialogTitle>
                 <DialogContent>
-                    {I18n.t('Are you sure you want to delete network "%s"?', this.state.showDeleteDialog)}
+                    {I18n.t('Are you sure you want to delete volume "%s"?', this.state.showDeleteDialog)}
                 </DialogContent>
                 <DialogActions>
                     <Button
@@ -181,23 +196,23 @@ export default class NetworksTab extends Component<NetworksTabProps, NetworksTab
                                     const result: { result: { stdout: string; stderr: string } } =
                                         await this.props.socket.sendTo(
                                             `docker-manager.${this.props.instance}`,
-                                            'network:remove',
+                                            'volume:remove',
                                             {
                                                 id: this.state.showDeleteDialog,
                                             },
                                         );
                                     this.setState({
-                                        requesting: false,
                                         showDeleteDialog: '',
                                         showHint: result?.result.stdout || '',
                                         showError: result?.result.stderr || '',
+                                        requesting: false,
                                     });
                                 } catch (e) {
-                                    console.error(`Cannot delete network ${this.state.showDeleteDialog}: ${e}`);
-                                    alert(`Cannot delete network ${this.state.showDeleteDialog}: ${e}`);
+                                    console.error(`Cannot delete volume ${this.state.showDeleteDialog}: ${e}`);
+                                    alert(`Cannot delete volume ${this.state.showDeleteDialog}: ${e}`);
                                     this.setState({
                                         requesting: false,
-                                        showError: `Cannot delete network ${this.state.showDeleteDialog}: ${e}`,
+                                        showError: `Cannot delete volume ${this.state.showDeleteDialog}: ${e}`,
                                     });
                                 }
                             });
@@ -294,10 +309,10 @@ export default class NetworksTab extends Component<NetworksTabProps, NetworksTab
                 <InfoBox
                     type="info"
                     closeable
-                    storeId="docker-manager.network"
+                    storeId="docker-manager.volumes"
                     iconPosition="top"
                 >
-                    {I18n.t('network_explanation')
+                    {I18n.t('volume_explanation')
                         .split('\n')
                         .map((line, i) => (
                             <div key={i.toString()}>{line}</div>
@@ -308,7 +323,7 @@ export default class NetworksTab extends Component<NetworksTabProps, NetworksTab
                         <TableRow style={{ backgroundColor: 'rgba(0, 0, 0, 0.2)' }}>
                             <TableCell style={{ fontWeight: 'bold' }}>
                                 <Tooltip
-                                    title={I18n.t('Add new network')}
+                                    title={I18n.t('Add new volume')}
                                     slotProps={{ popper: { sx: { pointerEvents: 'none' } } }}
                                 >
                                     <Fab
@@ -320,7 +335,7 @@ export default class NetworksTab extends Component<NetworksTabProps, NetworksTab
                                         onClick={() =>
                                             this.setState({
                                                 showAddDialog: true,
-                                                addNetworkName: '',
+                                                addVolumeName: '',
                                                 addNetworkDriver: '',
                                             })
                                         }
@@ -328,34 +343,27 @@ export default class NetworksTab extends Component<NetworksTabProps, NetworksTab
                                         <AddIcon />
                                     </Fab>
                                 </Tooltip>
-                                {I18n.t('ID')}
+                                {I18n.t('Name')}
                             </TableCell>
-                            <TableCell style={{ fontWeight: 'bold' }}>{I18n.t('Name')}</TableCell>
                             <TableCell style={{ fontWeight: 'bold' }}>{I18n.t('Driver')}</TableCell>
-                            <TableCell style={{ fontWeight: 'bold' }}>{I18n.t('Scope')}</TableCell>
+                            <TableCell style={{ fontWeight: 'bold' }}>{I18n.t('Volume')}</TableCell>
                             <TableCell />
                         </TableRow>
                     </TableHead>
                     <TableBody>
-                        {this.props.networks?.map(network => (
-                            <TableRow key={network.id}>
-                                <TableCell>{network.id}</TableCell>
-                                <TableCell style={{ fontWeight: 'bold' }}>{network.name}</TableCell>
-                                <TableCell>{network.driver || '--'}</TableCell>
-                                <TableCell>{network.scope}</TableCell>
+                        {this.props.volumes?.map(volume => (
+                            <TableRow key={volume.name}>
+                                <TableCell style={{ fontWeight: 'bold' }}>{volume.name}</TableCell>
+                                <TableCell>{volume.driver || '--'}</TableCell>
+                                <TableCell>{volume.volume}</TableCell>
                                 <TableCell>
                                     <IconButton
                                         size="small"
-                                        title={I18n.t('Delete network')}
-                                        disabled={
-                                            !this.props.alive ||
-                                            network.name === 'host' ||
-                                            network.name === 'bridge' ||
-                                            network.name === 'none'
-                                        }
+                                        title={I18n.t('Delete volume')}
+                                        disabled={this.state.requesting}
                                         onClick={() =>
                                             this.setState({
-                                                showDeleteDialog: network.id,
+                                                showDeleteDialog: volume.name,
                                             })
                                         }
                                     >

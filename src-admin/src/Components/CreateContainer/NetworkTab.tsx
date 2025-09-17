@@ -19,7 +19,14 @@ import {
 import { Add as AddIcon, Delete as DeleteIcon } from '@mui/icons-material';
 import { I18n } from '@iobroker/adapter-react-v5';
 
-import type { ContainerConfig, ContainerInfo, ImageInfo, PortBinding, Protocol } from '../../types';
+import type {
+    ContainerConfig,
+    ContainerInfo,
+    ImageInfo,
+    NetworkInfo,
+    PortBinding,
+    Protocol,
+} from '../../dockerManager.types';
 import styles from './styles';
 
 export function validateConfig(
@@ -64,6 +71,7 @@ export function validateConfig(
 
 export default function NetworkTab(props: {
     containers: ContainerInfo[] | null;
+    networks: NetworkInfo[] | null;
     config: ContainerConfig;
     requesting: boolean;
     onChange: (config: ContainerConfig) => void;
@@ -127,6 +135,18 @@ export default function NetworkTab(props: {
                     >
                         {I18n.t('None')}
                     </MenuItem>
+                    <MenuItem
+                        value="macvlan"
+                        key="macvlan"
+                    >
+                        macvlan
+                    </MenuItem>
+                    <MenuItem
+                        value="overlay"
+                        key="overlay"
+                    >
+                        Overlay
+                    </MenuItem>
                     {props.containers?.map(c => (
                         <MenuItem
                             value={`container:${c.id}`}
@@ -135,6 +155,16 @@ export default function NetworkTab(props: {
                             {I18n.t('container')}:{c.names}
                         </MenuItem>
                     ))}
+                    {props.networks
+                        ?.filter(n => !['bridge', 'host', 'none'].includes(n.name))
+                        .map(n => (
+                            <MenuItem
+                                value={n.name}
+                                key={n.id}
+                            >
+                                {n.name}
+                            </MenuItem>
+                        ))}
                 </Select>
             </FormControl>
             {!props.config.publishAllPorts ? (

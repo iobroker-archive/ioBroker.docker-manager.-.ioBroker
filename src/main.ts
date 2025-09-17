@@ -12,7 +12,7 @@ export class DockerManagerAdapter extends Adapter {
         | {
               clientId: string;
               ts: number;
-              type: 'info' | 'images' | 'containers' | 'container' | 'networks';
+              type: 'info' | 'images' | 'containers' | 'container' | 'networks' | 'volumes';
               container?: string;
               ownIp: string;
           }[]
@@ -45,11 +45,13 @@ export class DockerManagerAdapter extends Adapter {
             info: number;
             networks: number;
             container: string[];
+            volumes: number;
         } = {
             images: 0,
             containers: [],
             info: 0,
             networks: 0,
+            volumes: 0,
             container: [],
         };
 
@@ -64,6 +66,8 @@ export class DockerManagerAdapter extends Adapter {
                 scans.networks++;
             } else if (it.type === 'container') {
                 scans.container.push(it.container!);
+            } else if (it.type === 'volumes') {
+                scans.volumes++;
             } else if (it.type === 'info') {
                 scans.info++;
             }
@@ -287,6 +291,20 @@ export class DockerManagerAdapter extends Adapter {
             }
             case 'network:remove': {
                 const result = await this.#dockerCommands?.networkRemove(obj.message.id);
+                this.sendTo(obj.from, obj.command, { result }, obj.callback);
+                break;
+            }
+            case 'volume:create': {
+                const result = await this.#dockerCommands?.volumeCreate(
+                    obj.message.name,
+                    obj.message.driver,
+                    obj.message.volume,
+                );
+                this.sendTo(obj.from, obj.command, { result }, obj.callback);
+                break;
+            }
+            case 'volume:remove': {
+                const result = await this.#dockerCommands?.volumeRemove(obj.message.id);
                 this.sendTo(obj.from, obj.command, { result }, obj.callback);
                 break;
             }

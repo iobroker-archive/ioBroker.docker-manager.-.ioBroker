@@ -17,6 +17,8 @@ import type {
     ImageName,
     NetworkInfo,
     NetworkDriver,
+    VolumeInfo,
+    VolumeDriver,
 } from './dockerManager.types';
 
 const execPromise = promisify(exec);
@@ -1409,6 +1411,66 @@ export default class DockerManager {
             throw new Error(`Network ${networkId} still found after deletion`);
         }
         return { ...result, networks };
+    }
+
+    /** List all volumes */
+    async volumeList(): Promise<VolumeInfo[]> {
+        // docker network ls
+        try {
+            const { stdout } = await this.#exec(`volume ls --format "{{.Name}};{{.Driver}};{{.Mountpoint}}"`);
+            return stdout
+                .split('\n')
+                .filter(line => line.trim() !== '')
+                .map(line => {
+                    const [name, driver, volume] = line.split(';');
+                    return { name, driver: driver as VolumeDriver, volume };
+                });
+        } catch (e) {
+            this.adapter.log.debug(`Cannot list networks: ${e.message.toString()}`);
+            return [];
+        }
+    }
+
+    /**
+     * Create a volume
+     *
+     * @param name Volume name
+     * @param driver Volume driver
+     * @param volume Volume options (depends on driver)
+     */
+    async volumeCreate(
+        name: string,
+        driver?: VolumeDriver,
+        volume?: string,
+    ): Promise<{ stdout: string; stderr: string; volumes?: VolumeInfo[] }> {
+        let result: { stdout: string; stderr: string };
+        if (driver === 'local' || !driver) {
+            if (volume) {
+                result = await this.#exec(
+                    `volume create local --opt type=none --opt device=${volume} --opt o=bind ${name}`,
+                );
+            } else {
+                result = await this.#exec(`volume create ${name}`);
+            }
+        } else {
+            throw new Error('not implemented');
+        }
+
+        const volumes = await this.volumeList();
+        if (!volumes.find(it => it.name === name)) {
+            throw new Error(`Network ${name} not found after creation`);
+        }
+        return { ...result, volumes };
+    }
+
+    /** Remove a volume */
+    async volumeRemove(volumeName: string): Promise<{ stdout: string; stderr: string; volumes?: VolumeInfo[] }> {
+        const result = await this.#exec(`volume remove ${volumeName}`);
+        const volumes = await this.volumeList();
+        if (volumes.find(it => it.name === volumeName)) {
+            throw new Error(`Volume ${volumeName} still found after deletion`);
+        }
+        return { ...result, volumes };
     }
 
     /** Stop own containers if necessary */

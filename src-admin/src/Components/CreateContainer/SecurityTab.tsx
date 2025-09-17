@@ -1,7 +1,7 @@
 import React from 'react';
 import { Checkbox, FormControl, FormControlLabel, InputLabel, MenuItem, Select, TextField } from '@mui/material';
 import { I18n, type IobTheme } from '@iobroker/adapter-react-v5';
-import type { ContainerConfig, ContainerInfo, ImageInfo, Security } from '../../types';
+import type { ContainerConfig, ContainerInfo, ImageInfo, Security } from '../../dockerManager.types';
 import ChipInput from './ChipInput';
 
 import styles from './styles';

@@ -112,6 +112,7 @@ export default class ImagesTab extends Component<ImagesTabProps, ImagesTabState>
                         renderInput={params => (
                             <TextField
                                 {...params}
+                                disabled={this.state.requesting}
                                 variant="standard"
                                 label={I18n.t('Image name')}
                             />
@@ -282,6 +283,7 @@ export default class ImagesTab extends Component<ImagesTabProps, ImagesTabState>
                                         showDeleteDialog: '',
                                         showHint: result?.result.stdout || '',
                                         showError: result?.result.stderr || '',
+                                        requesting: false,
                                     });
                                 } catch (e) {
                                     console.error(`Cannot delete image ${this.state.showDeleteDialog}: ${e}`);

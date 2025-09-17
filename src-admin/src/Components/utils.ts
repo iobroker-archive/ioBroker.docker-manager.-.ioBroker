@@ -1,4 +1,4 @@
-import type { DockerContainerInspect, ContainerConfig } from '../types';
+import type { DockerContainerInspect, ContainerConfig } from '../dockerManager.types';
 
 export function size2string(size: number | undefined): string {
     if (size === undefined || size === null || isNaN(size)) {

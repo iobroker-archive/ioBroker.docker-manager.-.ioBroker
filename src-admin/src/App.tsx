@@ -26,7 +26,14 @@ import esLang from './i18n/es.json';
 import plLang from './i18n/pl.json';
 import ukLang from './i18n/uk.json';
 import zhCnLang from './i18n/zh-cn.json';
-import type { ContainerInfo, DiskUsage, DockerContainerInspect, ImageInfo, NetworkInfo } from './dockerManager.types';
+import type {
+    ContainerInfo,
+    DiskUsage,
+    DockerContainerInspect,
+    ImageInfo,
+    NetworkInfo,
+    VolumeInfo,
+} from './dockerManager.types';
 import type { GUIResponse } from './types';
 
 const styles: { [styleName: string]: any } = {
@@ -52,9 +59,10 @@ import InfoTab from './Tabs/Info';
 import ImagesTab from './Tabs/Images';
 import ContainersTab from './Tabs/Containers';
 import NetworksTab from './Tabs/Networks';
+import VolumesTab from './Tabs/Volumes';
 
 interface AppState extends GenericAppState {
-    selectedTab: 'info' | 'images' | 'containers' | 'networks';
+    selectedTab: 'info' | 'images' | 'containers' | 'networks' | 'volumes';
     ready: boolean;
     alive: boolean;
     backendRunning: boolean;
@@ -63,6 +71,7 @@ interface AppState extends GenericAppState {
     error?: string;
     containers?: ContainerInfo[];
     networks?: NetworkInfo[];
+    volumes?: VolumeInfo[];
     images?: ImageInfo[];
     container: { [id: string]: DockerContainerInspect };
 }
@@ -277,6 +286,8 @@ export default class App extends GenericApp<GenericAppProps, AppState> {
             this.setState({ info: update.data, version: update.version || 'unknown', error: update.error });
         } else if (update.command === 'networks') {
             this.setState({ networks: update.data, error: update.error });
+        } else if (update.command === 'volumes') {
+            this.setState({ volumes: update.data, error: update.error });
         } else if (update.command === 'images') {
             update.data?.sort((a, b) => {
                 const aText = a.repository + (a.tag || 'latest');
@@ -356,6 +367,7 @@ export default class App extends GenericApp<GenericAppProps, AppState> {
                 images={this.state.images}
                 containers={this.state.containers}
                 container={this.state.container}
+                networks={this.state.networks}
                 themeType={this.state.themeType}
                 onExecuteCommand={this.onExecuteCommand}
             />
@@ -369,6 +381,17 @@ export default class App extends GenericApp<GenericAppProps, AppState> {
                 socket={this.socket}
                 instance={this.instance}
                 networks={this.state.networks}
+            />
+        );
+    }
+
+    renderVolumesTab(): React.ReactNode {
+        return (
+            <VolumesTab
+                alive={this.state.alive}
+                socket={this.socket}
+                instance={this.instance}
+                volumes={this.state.volumes}
             />
         );
     }
@@ -421,14 +444,20 @@ export default class App extends GenericApp<GenericAppProps, AppState> {
                                 />
                                 <Tab
                                     sx={{ '&.Mui-selected': styles.selected }}
-                                    label={I18n.t('Containers')}
-                                    value="containers"
-                                />
-                                <Tab
-                                    sx={{ '&.Mui-selected': styles.selected }}
                                     label={I18n.t('Networks')}
                                     value="networks"
                                 />
+                                <Tab
+                                    sx={{ '&.Mui-selected': styles.selected }}
+                                    label={I18n.t('Volumes')}
+                                    value="volumes"
+                                />
+                                <Tab
+                                    sx={{ '&.Mui-selected': styles.selected }}
+                                    label={I18n.t('Containers')}
+                                    value="containers"
+                                />
+
                                 <div style={{ flexGrow: 1 }} />
                                 {this.state.alive ? null : (
                                     <Tooltip
@@ -469,6 +498,7 @@ export default class App extends GenericApp<GenericAppProps, AppState> {
                             {this.state.selectedTab === 'images' && this.renderImagesTab()}
                             {this.state.selectedTab === 'containers' && this.renderContainersTab()}
                             {this.state.selectedTab === 'networks' && this.renderNetworksTab()}
+                            {this.state.selectedTab === 'volumes' && this.renderVolumesTab()}
                         </div>
                         {this.renderError()}
                         {this.state.selectedTab === 'containers' ? this.renderSaveCloseButtons() : null}

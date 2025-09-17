@@ -48,6 +48,15 @@ In ioBroker notation, it is like an instance of an adapter.
     - On Linux: `systemctl status docker`
     - On Windows and macOS, Docker Desktop should be running.
 
+## Todo
+- Use labels to identify containers created by this adapter
+- Use API instead of CLI commands
+- Find solution to run iobroker in docker and manage docker containers
+- Place docker volumes in `/opt/iobroker/docker-volumes/influxdb.0`
+- BackItUp should support `/opt/iobroker/docker-volumes`
+- Think about js-controller will remove dockers which are not used anymore but has label
+- Docker Plugin like sentry??
+
 <!--
 	Placeholder for the next version (at the beginning of the line):
 	### **WORK IN PROGRESS**

@@ -35,7 +35,13 @@ import {
     TextRotationNone as ExecuteIcon,
     Stop,
 } from '@mui/icons-material';
-import type { ContainerInfo, DockerContainerInspect, ImageInfo, ContainerConfig } from '../dockerManager.types';
+import type {
+    ContainerInfo,
+    DockerContainerInspect,
+    ImageInfo,
+    ContainerConfig,
+    NetworkInfo,
+} from '../dockerManager.types';
 import CreateContainerDialog from '../Components/CreateContainer';
 import { mapInspectToConfig } from '../Components/utils';
 
@@ -45,6 +51,7 @@ interface ContainersTabProps {
     instance: number;
     images: ImageInfo[] | undefined;
     containers: ContainerInfo[] | undefined;
+    networks: NetworkInfo[] | undefined;
     container: { [id: string]: DockerContainerInspect };
     themeType: ThemeType;
     theme: IobTheme;
@@ -127,6 +134,7 @@ export default class ContainersTab extends Component<ContainersTabProps, Contain
         return (
             <CreateContainerDialog
                 instance={this.props.instance}
+                networks={this.props.networks || []}
                 theme={this.props.theme}
                 themeType={this.props.themeType}
                 images={this.props.images}

@@ -13,7 +13,7 @@ import {
 import { Add as AddIcon, Delete as DeleteIcon } from '@mui/icons-material';
 import { I18n } from '@iobroker/adapter-react-v5';
 
-import type { ContainerConfig, ContainerInfo, ImageInfo } from '../../types';
+import type { ContainerConfig, ContainerInfo, ImageInfo } from '../../dockerManager.types';
 import styles from './styles';
 
 export function validateConfig(
