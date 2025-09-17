@@ -1,19 +1,18 @@
 import { type AdapterOptions, Adapter } from '@iobroker/adapter-core';
-import type { DockerImageTagsResponse, DockerManagerAdapterConfig, GUIResponse } from './types';
+import type { DockerImageTagsResponse } from './lib/dockerManager.types';
+import type { GUIResponse } from './types';
 
-import DockerCommands from './lib/DockerCommands';
+import DockerCommands from './lib/DockerMonitor';
 import axios from 'axios';
 
 export class DockerManagerAdapter extends Adapter {
-    declare config: DockerManagerAdapterConfig;
-
     #dockerCommands: DockerCommands | undefined;
 
     #_guiSubscribes:
         | {
               clientId: string;
               ts: number;
-              type: 'info' | 'images' | 'containers' | 'container';
+              type: 'info' | 'images' | 'containers' | 'container' | 'networks';
               container?: string;
               ownIp: string;
           }[]
@@ -39,16 +38,18 @@ export class DockerManagerAdapter extends Adapter {
         this.on('message', this.#onMessage.bind(this));
     }
 
-    scanRequests(): void {
+    async scanRequests(): Promise<void> {
         const scans: {
             images: number;
             containers: string[];
             info: number;
+            networks: number;
             container: string[];
         } = {
             images: 0,
             containers: [],
             info: 0,
+            networks: 0,
             container: [],
         };
 
@@ -59,6 +60,8 @@ export class DockerManagerAdapter extends Adapter {
                 if (!scans.containers.includes(it.ownIp)) {
                     scans.containers.push(it.ownIp);
                 }
+            } else if (it.type === 'networks') {
+                scans.networks++;
             } else if (it.type === 'container') {
                 scans.container.push(it.container!);
             } else if (it.type === 'info') {
@@ -66,7 +69,7 @@ export class DockerManagerAdapter extends Adapter {
             }
         });
 
-        this.#dockerCommands?.pollingUpdate(scans);
+        await this.#dockerCommands?.pollingUpdate(scans);
     }
 
     onClientSubscribe(
@@ -78,7 +81,7 @@ export class DockerManagerAdapter extends Adapter {
             return { error: `Adapter is still initializing`, accepted: false };
         }
         const msg: {
-            type: 'info' | 'images' | 'containers' | 'container';
+            type: 'info' | 'images' | 'containers' | 'container' | 'networks';
             data?: {
                 containerId?: string;
                 ownIp: string;
@@ -103,13 +106,13 @@ export class DockerManagerAdapter extends Adapter {
                 container: msg.data.containerId,
                 ownIp: msg.data.ownIp,
             });
-            this.scanRequests();
+            this.scanRequests().catch(e => this.log.warn(`Cannot scan: ${e}`));
         } else {
             sub.ts = Date.now();
             if (sub.type !== msg.type || sub.container !== msg.data?.containerId) {
                 sub.type = msg.type;
                 sub.container = msg.data?.containerId;
-                this.scanRequests();
+                this.scanRequests().catch(e => this.log.warn(`Cannot scan: ${e}`));
             }
         }
 
@@ -141,7 +144,7 @@ export class DockerManagerAdapter extends Adapter {
                 this.#_guiSubscribes.splice(pos, 1);
             }
         } while (deleted);
-        this.scanRequests();
+        this.scanRequests().catch(e => this.log.warn(`Cannot scan: ${e}`));
     }
 
     sendToGui = async (data: GUIResponse, sid?: string): Promise<void> => {
@@ -173,14 +176,14 @@ export class DockerManagerAdapter extends Adapter {
     async #onReady(): Promise<void> {
         this.log.info(`Adapter matter-controller started`);
         this.#dockerCommands = new DockerCommands(this);
-        await this.#dockerCommands.init();
+        await this.#dockerCommands.isReady();
         this.#_guiSubscribes = [];
-        this.scanRequests();
+        await this.scanRequests();
     }
 
     async #onUnload(callback: () => void): Promise<void> {
         try {
-            this.#dockerCommands?.destroy();
+            await this.#dockerCommands?.destroy();
             this.#dockerCommands = undefined;
             // inform GUI about stop
             await this.sendToGui({ command: 'stopped' });
@@ -238,16 +241,15 @@ export class DockerManagerAdapter extends Adapter {
                 break;
             }
             case 'container:run': {
-                const result = await this.#dockerCommands?.containerRun(obj.message.image, obj.message);
+                const result = await this.#dockerCommands?.containerRun(obj.message);
                 this.sendTo(obj.from, obj.command, { result }, obj.callback);
                 break;
             }
             case 'container:create': {
-                const result = await this.#dockerCommands?.containerCreate(obj.message.image, obj.message);
+                const result = await this.#dockerCommands?.containerCreate(obj.message);
                 this.sendTo(obj.from, obj.command, { result }, obj.callback);
                 break;
             }
-
             case 'container:stop': {
                 const result = await this.#dockerCommands?.containerStop(obj.message.id);
                 this.sendTo(obj.from, obj.command, { result }, obj.callback);
@@ -278,6 +280,17 @@ export class DockerManagerAdapter extends Adapter {
                 this.sendTo(obj.from, obj.command, { result }, obj.callback);
                 break;
             }
+            case 'network:create': {
+                const result = await this.#dockerCommands?.networkCreate(obj.message.name, obj.message.driver);
+                this.sendTo(obj.from, obj.command, { result }, obj.callback);
+                break;
+            }
+            case 'network:remove': {
+                const result = await this.#dockerCommands?.networkRemove(obj.message.id);
+                this.sendTo(obj.from, obj.command, { result }, obj.callback);
+                break;
+            }
+
             default:
                 this.log.warn(`Unknown command: ${obj.command}`);
                 break;

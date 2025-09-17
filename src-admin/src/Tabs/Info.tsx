@@ -2,7 +2,7 @@ import React from 'react';
 import { Paper, Table, TableRow, TableHead, TableBody, TableCell } from '@mui/material';
 
 import { type AdminConnection, I18n, InfoBox } from '@iobroker/adapter-react-v5';
-import type { DiskUsage } from '../types';
+import type { DiskUsage } from '../dockerManager.types';
 import { size2string } from '../Components/utils';
 
 interface InfoTabProps {

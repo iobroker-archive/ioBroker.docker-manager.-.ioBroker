@@ -35,7 +35,7 @@ import {
     TextRotationNone as ExecuteIcon,
     Stop,
 } from '@mui/icons-material';
-import type { ContainerInfo, DockerContainerInspect, ImageInfo, ContainerConfig } from '../types';
+import type { ContainerInfo, DockerContainerInspect, ImageInfo, ContainerConfig } from '../dockerManager.types';
 import CreateContainerDialog from '../Components/CreateContainer';
 import { mapInspectToConfig } from '../Components/utils';
 

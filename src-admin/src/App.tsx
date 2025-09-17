@@ -26,7 +26,8 @@ import esLang from './i18n/es.json';
 import plLang from './i18n/pl.json';
 import ukLang from './i18n/uk.json';
 import zhCnLang from './i18n/zh-cn.json';
-import type { ContainerInfo, DiskUsage, DockerContainerInspect, GUIResponse, ImageInfo } from './types';
+import type { ContainerInfo, DiskUsage, DockerContainerInspect, ImageInfo, NetworkInfo } from './dockerManager.types';
+import type { GUIResponse } from './types';
 
 const styles: { [styleName: string]: any } = {
     tabContent: {
@@ -50,9 +51,10 @@ const styles: { [styleName: string]: any } = {
 import InfoTab from './Tabs/Info';
 import ImagesTab from './Tabs/Images';
 import ContainersTab from './Tabs/Containers';
+import NetworksTab from './Tabs/Networks';
 
 interface AppState extends GenericAppState {
-    selectedTab: 'info' | 'images' | 'containers';
+    selectedTab: 'info' | 'images' | 'containers' | 'networks';
     ready: boolean;
     alive: boolean;
     backendRunning: boolean;
@@ -60,6 +62,7 @@ interface AppState extends GenericAppState {
     version?: string;
     error?: string;
     containers?: ContainerInfo[];
+    networks?: NetworkInfo[];
     images?: ImageInfo[];
     container: { [id: string]: DockerContainerInspect };
 }
@@ -112,7 +115,8 @@ export default class App extends GenericApp<GenericAppProps, AppState> {
                 (window.localStorage.getItem(`${this.adapterName}.${this.instance}.selectedTab`) as
                     | 'info'
                     | 'images'
-                    | 'containers') || 'info',
+                    | 'containers'
+                    | 'networks') || 'info',
             ready: false,
         };
 
@@ -271,6 +275,8 @@ export default class App extends GenericApp<GenericAppProps, AppState> {
         }
         if (update.command === 'info') {
             this.setState({ info: update.data, version: update.version || 'unknown', error: update.error });
+        } else if (update.command === 'networks') {
+            this.setState({ networks: update.data, error: update.error });
         } else if (update.command === 'images') {
             update.data?.sort((a, b) => {
                 const aText = a.repository + (a.tag || 'latest');
@@ -356,6 +362,17 @@ export default class App extends GenericApp<GenericAppProps, AppState> {
         );
     }
 
+    renderNetworksTab(): React.ReactNode {
+        return (
+            <NetworksTab
+                alive={this.state.alive}
+                socket={this.socket}
+                instance={this.instance}
+                networks={this.state.networks}
+            />
+        );
+    }
+
     render(): React.JSX.Element {
         if (!this.state.ready || !this.state.alive) {
             return (
@@ -407,6 +424,11 @@ export default class App extends GenericApp<GenericAppProps, AppState> {
                                     label={I18n.t('Containers')}
                                     value="containers"
                                 />
+                                <Tab
+                                    sx={{ '&.Mui-selected': styles.selected }}
+                                    label={I18n.t('Networks')}
+                                    value="networks"
+                                />
                                 <div style={{ flexGrow: 1 }} />
                                 {this.state.alive ? null : (
                                     <Tooltip
@@ -446,6 +468,7 @@ export default class App extends GenericApp<GenericAppProps, AppState> {
                             {(!this.state.selectedTab || this.state.selectedTab === 'info') && this.renderInfoTab()}
                             {this.state.selectedTab === 'images' && this.renderImagesTab()}
                             {this.state.selectedTab === 'containers' && this.renderContainersTab()}
+                            {this.state.selectedTab === 'networks' && this.renderNetworksTab()}
                         </div>
                         {this.renderError()}
                         {this.state.selectedTab === 'containers' ? this.renderSaveCloseButtons() : null}
