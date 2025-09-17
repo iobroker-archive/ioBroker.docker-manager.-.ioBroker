@@ -1,8 +1,21 @@
 {
   "common": {
     "name": "docker-manager",
-    "version": "0.0.2",
+    "version": "0.0.3",
     "news": {
+      "0.0.3": {
+        "en": "Initial commit",
+        "de": "Erster Commit",
+        "ru": "Первоначальный коммит",
+        "pt": "Commit inicial",
+        "nl": "Eerste commit",
+        "fr": "Premier commit",
+        "it": "Commit iniziale",
+        "es": "Commit inicial",
+        "pl": "Pierwszy commit",
+        "uk": "Початковий коміт",
+        "zh-cn": "初始提交"
+      },
       "0.0.2": {
         "en": "Initial commit",
         "de": "Ursprüngliche Verpflichtung",
