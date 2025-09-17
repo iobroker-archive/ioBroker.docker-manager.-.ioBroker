@@ -19,6 +19,8 @@ import {
     Snackbar,
     TextField,
     LinearProgress,
+    MenuItem,
+    Menu,
 } from '@mui/material';
 import {
     Add as AddIcon,
@@ -68,6 +70,7 @@ interface ContainersTabState {
     showExecDialog: string;
     execCommand: string;
     execResults: { stderr: string; stdout: string };
+    showLinks: { anchorEl: HTMLElement | null; container: ContainerInfo } | null;
 }
 
 export default class ContainersTab extends Component<ContainersTabProps, ContainersTabState> {
@@ -90,6 +93,7 @@ export default class ContainersTab extends Component<ContainersTabProps, Contain
             showExecDialog: '',
             execCommand: window.localStorage.getItem('exec') || '',
             execResults: { stderr: '', stdout: '' },
+            showLinks: null,
         };
     }
 
@@ -584,6 +588,34 @@ export default class ContainersTab extends Component<ContainersTabProps, Contain
         );
     }
 
+    renderLinks(): React.JSX.Element {
+        return (
+            <Menu
+                anchorEl={this.state.showLinks?.anchorEl}
+                open={!!this.state.showLinks}
+                onClose={() => this.setState({ showLinks: null })}
+            >
+                {this.state.showLinks?.container.httpLinks?.[window.location.hostname]?.map(link => (
+                    <MenuItem
+                        key={link}
+                        sx={{
+                            '& a:hover': { textDecoration: 'underline' },
+                            '& a:visited': {
+                                color: this.props.themeType === 'dark' ? '#4da6ff' : '#0066ff',
+                            },
+                            '& a:active': {
+                                color: this.props.themeType === 'dark' ? '#4da6ff' : '#0066ff',
+                            },
+                        }}
+                        onClick={() => this.setState({ showLinks: null })}
+                    >
+                        <a href={link}>{link}</a>
+                    </MenuItem>
+                ))}
+            </Menu>
+        );
+    }
+
     render(): React.JSX.Element {
         return (
             <Paper style={{ width: 'calc(100% - 8px)', height: 'calc(100% - 8px)', padding: 4 }}>
@@ -596,6 +628,7 @@ export default class ContainersTab extends Component<ContainersTabProps, Contain
                 {this.renderInspect()}
                 {this.renderLogs()}
                 {this.renderExecDialog()}
+                {this.renderLinks()}
                 <InfoBox
                     type="info"
                     closeable
@@ -655,7 +688,17 @@ export default class ContainersTab extends Component<ContainersTabProps, Contain
                             <TableRow key={container.id}>
                                 <TableCell>{container.id || '--'}</TableCell>
                                 <TableCell>{container.names || '--'}</TableCell>
-                                <TableCell>
+                                <TableCell
+                                    sx={{
+                                        '& a:hover': { textDecoration: 'underline' },
+                                        '& a:visited': {
+                                            color: this.props.themeType === 'dark' ? '#4da6ff' : '#0066ff',
+                                        },
+                                        '& a:active': {
+                                            color: this.props.themeType === 'dark' ? '#4da6ff' : '#0066ff',
+                                        },
+                                    }}
+                                >
                                     {container.image ? (
                                         <a
                                             href={`https://hub.docker.com/r/${container.image.split(':')[0]}`}
@@ -679,7 +722,23 @@ export default class ContainersTab extends Component<ContainersTabProps, Contain
                                 </TableCell>
                                 <TableCell>{container.status || '--'}</TableCell>
                                 <TableCell>{container.uptime || '--'}</TableCell>
-                                <TableCell>
+                                <TableCell
+                                    title={
+                                        container.httpLinks?.[window.location.hostname]?.length
+                                            ? I18n.t('Click to open links')
+                                            : undefined
+                                    }
+                                    style={{
+                                        cursor: container.httpLinks?.[window.location.hostname]?.length
+                                            ? 'pointer'
+                                            : 'default',
+                                    }}
+                                    onClick={e => {
+                                        if (container.httpLinks?.[window.location.hostname]?.length) {
+                                            this.setState({ showLinks: { anchorEl: e.currentTarget, container } });
+                                        }
+                                    }}
+                                >
                                     {container.ports.split(',').map((it, i) => (
                                         <div key={i.toString()}>{it.trim()}</div>
                                     ))}

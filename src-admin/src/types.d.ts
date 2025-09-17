@@ -593,6 +593,7 @@ export type ContainerInfo = {
     uptime: string;
     ports: string;
     names: string;
+    httpLinks?: { [ip: string]: string[] };
 };
 
 export type ImageInfo = {

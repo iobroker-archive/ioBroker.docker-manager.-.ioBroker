@@ -499,7 +499,18 @@ export default class ImagesTab extends Component<ImagesTabProps, ImagesTabState>
                     <TableBody>
                         {this.props.images?.map(image => (
                             <TableRow key={image.id}>
-                                <TableCell style={{ fontWeight: 'bold', fontSize: '1rem' }}>
+                                <TableCell
+                                    style={{ fontWeight: 'bold', fontSize: '1rem' }}
+                                    sx={{
+                                        '& a:hover': { textDecoration: 'underline' },
+                                        '& a:visited': {
+                                            color: this.props.themeType === 'dark' ? '#4da6ff' : '#0066ff',
+                                        },
+                                        '& a:active': {
+                                            color: this.props.themeType === 'dark' ? '#4da6ff' : '#0066ff',
+                                        },
+                                    }}
+                                >
                                     {image.repository ? (
                                         <a
                                             href={`https://hub.docker.com/r/${image.repository}`}

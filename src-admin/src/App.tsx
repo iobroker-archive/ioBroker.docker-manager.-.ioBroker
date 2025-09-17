@@ -97,7 +97,7 @@ export default class App extends GenericApp<GenericAppProps, AppState> {
         extendedProps.sentryDSN = window.sentryDSN;
         // extendedProps.socket = {
         //     protocol: 'http:',
-        //     host: '192.168.1.71',
+        //     host: '192.168.35.12',
         //     port: 8081,
         // };
 
@@ -185,7 +185,7 @@ export default class App extends GenericApp<GenericAppProps, AppState> {
             .subscribeOnInstance(
                 `docker-manager.${this.instance}`,
                 this.state.selectedTab || 'info',
-                null,
+                { ownIp: window.location.hostname },
                 this.onBackendUpdates,
             )
             .then(this.onSubscribeToBackEndSubmitted)
@@ -203,7 +203,7 @@ export default class App extends GenericApp<GenericAppProps, AppState> {
                     .subscribeOnInstance(
                         `docker-manager.${this.instance}`,
                         'containers',
-                        { containerId: containerId, command: '', terminate: true },
+                        { containerId: containerId, terminate: true, ownIp: window.location.hostname },
                         this.onBackendUpdates,
                     )
                     .then(this.onSubscribeToBackEndSubmitted)
@@ -217,7 +217,7 @@ export default class App extends GenericApp<GenericAppProps, AppState> {
             .subscribeOnInstance(
                 `docker-manager.${this.instance}`,
                 'containers',
-                { containerId: containerId, command },
+                { containerId: containerId, command, ownIp: window.location.hostname },
                 this.onBackendUpdates,
             )
             .then(this.onSubscribeToBackEndSubmitted)

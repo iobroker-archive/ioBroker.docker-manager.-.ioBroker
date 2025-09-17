@@ -10,7 +10,13 @@ export class DockerManagerAdapter extends Adapter {
     #dockerCommands: DockerCommands | undefined;
 
     #_guiSubscribes:
-        | { clientId: string; ts: number; type: 'info' | 'images' | 'containers' | 'container'; container?: string }[]
+        | {
+              clientId: string;
+              ts: number;
+              type: 'info' | 'images' | 'containers' | 'container';
+              container?: string;
+              ownIp: string;
+          }[]
         | null = null;
 
     public constructor(options: Partial<AdapterOptions> = {}) {
@@ -36,12 +42,12 @@ export class DockerManagerAdapter extends Adapter {
     scanRequests(): void {
         const scans: {
             images: number;
-            containers: number;
+            containers: string[];
             info: number;
             container: string[];
         } = {
             images: 0,
-            containers: 0,
+            containers: [],
             info: 0,
             container: [],
         };
@@ -50,7 +56,9 @@ export class DockerManagerAdapter extends Adapter {
             if (it.type === 'images') {
                 scans.images++;
             } else if (it.type === 'containers') {
-                scans.containers++;
+                if (!scans.containers.includes(it.ownIp)) {
+                    scans.containers.push(it.ownIp);
+                }
             } else if (it.type === 'container') {
                 scans.container.push(it.container!);
             } else if (it.type === 'info') {
@@ -69,42 +77,49 @@ export class DockerManagerAdapter extends Adapter {
         if (!this.#_guiSubscribes) {
             return { error: `Adapter is still initializing`, accepted: false };
         }
+        const msg: {
+            type: 'info' | 'images' | 'containers' | 'container';
+            data?: {
+                containerId?: string;
+                ownIp: string;
+                command?: string;
+                terminate?: boolean;
+            };
+        } = message.message;
 
+        if (!msg.data) {
+            return { error: `Invalid message: no data`, accepted: false };
+        }
+        if (!msg.data.ownIp) {
+            return { error: `Invalid message: no own IP`, accepted: false };
+        }
         // inform GUI that subscription is started
         const sub = this.#_guiSubscribes.find(s => s.clientId === clientId);
         if (!sub) {
             this.#_guiSubscribes.push({
                 clientId,
                 ts: Date.now(),
-                type: message.message.type as 'info' | 'images' | 'containers' | 'container',
-                container: message.message.container,
+                type: msg.type,
+                container: msg.data.containerId,
+                ownIp: msg.data.ownIp,
             });
             this.scanRequests();
         } else {
             sub.ts = Date.now();
-            if (
-                sub.type !== (message.message.type as 'info' | 'images' | 'containers' | 'container') ||
-                sub.container !== message.message.container
-            ) {
-                sub.type = message.message.type as 'info' | 'images' | 'containers' | 'container';
+            if (sub.type !== msg.type || sub.container !== msg.data?.containerId) {
+                sub.type = msg.type;
+                sub.container = msg.data?.containerId;
                 this.scanRequests();
             }
         }
 
-        if (message.message.type === 'containers' && message.message.data?.containerId) {
-            if (message.message.data.terminate) {
+        if (msg.type === 'containers' && msg.data?.containerId) {
+            if (msg.data.terminate) {
                 // terminate execution
-                void this.#dockerCommands?.containerExecTerminate(
-                    message.message.data.containerId,
-                    message.message.data.command,
-                );
+                void this.#dockerCommands?.containerExecTerminate(msg.data.containerId, true);
             } else {
                 // start execution
-                void this.#dockerCommands?.containerExec(
-                    message.message.data.containerId,
-                    message.message.data.command,
-                    clientId,
-                );
+                void this.#dockerCommands?.containerExec(msg.data.containerId, msg.data.command!, clientId);
             }
         }
 

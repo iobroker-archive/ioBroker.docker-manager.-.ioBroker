@@ -4,6 +4,9 @@
 
 import { promisify } from 'node:util';
 import { exec, spawn } from 'node:child_process';
+import { networkInterfaces } from 'node:os';
+import { lookup } from 'node:dns/promises';
+
 import type {
     ContainerConfig,
     ContainerInfo,
@@ -14,11 +17,65 @@ import type {
 } from '../types';
 import { type DockerManagerAdapter } from '../main';
 import type { ChildProcessWithoutNullStreams } from 'child_process';
+import http from 'node:http';
+import { inRange, isIP } from 'range_check';
 
 const execPromise = promisify(exec);
 
 export type ImageName = string;
 export type ContainerName = string;
+
+function isHttpResponse(url: string, timeout: number = 1000): Promise<boolean | 'timeout'> {
+    return new Promise(resolve => {
+        try {
+            const req = http.request(url, { method: 'HEAD', timeout }, res => {
+                resolve(typeof res.statusCode === 'number');
+                req.destroy();
+            });
+            req.on('error', error => {
+                if (
+                    error.toString().toUpperCase().includes('TIMEDOUT') ||
+                    error.toString().toUpperCase().includes('TIMEOUT')
+                ) {
+                    resolve('timeout');
+                } else {
+                    resolve(false);
+                }
+            });
+            req.end();
+        } catch {
+            resolve(false);
+        }
+    });
+}
+
+function findOwnIpFor(ipToAccess: string): string | null {
+    if (!isIP(ipToAccess)) {
+        return null;
+    }
+    const interfaces = networkInterfaces();
+    for (const iface of Object.values(interfaces)) {
+        if (iface) {
+            for (const alias of iface) {
+                if (alias.family === 'IPv4' && !alias.internal && alias.cidr) {
+                    if (inRange(ipToAccess, alias.cidr)) {
+                        return alias.address;
+                    }
+                }
+            }
+        }
+    }
+    return null;
+}
+
+async function getIpForDomain(domain: string): Promise<string | false> {
+    try {
+        const result = await lookup(domain);
+        return result.address;
+    } catch {
+        return false;
+    }
+}
 
 export default class DockerCommands {
     #installed: boolean = false;
@@ -42,6 +99,9 @@ export default class DockerCommands {
             onUnsubscribe?: boolean;
         };
     } = {};
+    readonly checkedURLs: { [url: string]: boolean | 'timeout' } = {};
+    #ownIps: string[] = [];
+    #domain2ip: { [domain: string]: string | false } = {};
 
     constructor(adapter: DockerManagerAdapter) {
         this.#adapter = adapter;
@@ -541,12 +601,12 @@ export default class DockerCommands {
         }
     }
 
-    async containerList(all: boolean = true): Promise<ContainerInfo[]> {
+    async containerList(all: boolean = true, ownIps?: string[]): Promise<ContainerInfo[]> {
         try {
             const { stdout } = await this.#exec(
                 `ps ${all ? '-a' : ''} --format  "{{.Names}};{{.Status}};{{.ID}};{{.Image}};{{.Command}};{{.CreatedAt}};{{.Ports}}"`,
             );
-            return stdout
+            const containers: ContainerInfo[] = stdout
                 .split('\n')
                 .filter(line => line.trim() !== '')
                 .map(line => {
@@ -558,6 +618,57 @@ export default class DockerCommands {
                     }
                     return { id, image, command, createdAt, status: statusKey, uptime: uptime.join(' '), ports, names };
                 });
+            if (ownIps) {
+                // Try to define if the provided ports are HTTP server
+                for (const container of containers) {
+                    if (!container.ports || container.status !== 'running') {
+                        continue;
+                    }
+                    const ports: string[] = container.ports?.split(',').map(p => p.trim()) || [];
+                    // We have something like '127.0.0.1:8086->8086/tcp'
+                    for (const port of ports) {
+                        const parts = port.split('->');
+                        if (parts.length === 2) {
+                            const [hostIp, hostPort] = parts[0].split(':');
+                            const [, protocol] = parts[1].split('/');
+                            if (protocol === 'tcp') {
+                                // request to the port and check if we get HTTP response
+                                // create url
+                                const url = `http://${hostIp === '127.0.0.1' ? 'localhost' : hostIp}:${hostPort}`;
+                                if (this.checkedURLs[url] === undefined || this.checkedURLs[url] === 'timeout') {
+                                    this.checkedURLs[url] = await isHttpResponse(url);
+                                }
+                                if (this.checkedURLs[url] === true) {
+                                    if (hostIp === '0.0.0.0') {
+                                        // find the local network interface IP that suits to ownIp
+                                        for (const ownIp of ownIps) {
+                                            const realIp = this.#domain2ip[ownIp] || ownIp;
+                                            if (isIP(realIp)) {
+                                                const hostIp = findOwnIpFor(this.#domain2ip[ownIp] || ownIp);
+                                                container.httpLinks ||= {};
+                                                container.httpLinks[ownIp] ||= [];
+                                                if (hostIp) {
+                                                    container.httpLinks[ownIp].push(url.replace('0.0.0.0', ownIp));
+                                                } else {
+                                                    container.httpLinks[ownIp].push(url);
+                                                }
+                                            }
+                                        }
+                                    } else {
+                                        for (const ownIp of ownIps) {
+                                            container.httpLinks ||= {};
+                                            container.httpLinks[ownIp] ||= [];
+                                            container.httpLinks[ownIp].push(url);
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
+            return containers;
         } catch (e) {
             this.#adapter.log.debug(`Cannot list containers: ${e.message}`);
             return [];
@@ -608,6 +719,10 @@ export default class DockerCommands {
     containerExec(container: ContainerName, command: string, sid: string): void {
         const hasTTY = process.stdin.isTTY && process.stdout.isTTY;
         const args: string[] = ['exec'];
+        if (!command) {
+            this.#adapter.log.error('No command specified for exec');
+            return;
+        }
 
         if (hasTTY) {
             args.push('-t');
@@ -921,7 +1036,7 @@ export default class DockerCommands {
             });
             return;
         }
-        const data = await this.containerList();
+        const data = await this.containerList(true, this.#ownIps?.length ? this.#ownIps : undefined);
         await this.#adapter.sendToGui({
             command: 'containers',
             data,
@@ -945,7 +1060,12 @@ export default class DockerCommands {
         });
     }
 
-    pollingUpdate(scan: { images: number; containers: number; info: number; container: string[] }): void {
+    async pollingUpdate(scan: {
+        images: number;
+        containers: string[];
+        info: number;
+        container: string[];
+    }): Promise<void> {
         if (scan.info) {
             this.#timers.info ||= setInterval(async () => this.#pollingInfo(), 10_000);
             setTimeout(() => void this.#pollingInfo(), 50); // do it immediately, too
@@ -965,6 +1085,19 @@ export default class DockerCommands {
         }
 
         if (scan.containers) {
+            this.#ownIps = scan.containers;
+            // try to find for all domain names the own IP
+            for (const ipOrDomain of scan.containers) {
+                if (this.#domain2ip[ipOrDomain] === undefined && !isIP(ipOrDomain)) {
+                    const ip = await getIpForDomain(ipOrDomain);
+                    if (ip) {
+                        this.#domain2ip[ipOrDomain] = ip;
+                    } else {
+                        this.#domain2ip[ipOrDomain] = false;
+                    }
+                }
+            }
+
             this.#timers.containers ||= setInterval(async () => this.#pollingContainers(), 10_000);
             setTimeout(() => void this.#pollingContainers(), 50); // do it immediately, too
         } else if (this.#timers.containers) {
