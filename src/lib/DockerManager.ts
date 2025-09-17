@@ -1112,19 +1112,39 @@ export default class DockerManager {
     async containerList(all: boolean = true): Promise<ContainerInfo[]> {
         try {
             const { stdout } = await this.#exec(
-                `ps ${all ? '-a' : ''} --format  "{{.Names}};{{.Status}};{{.ID}};{{.Image}};{{.Command}};{{.CreatedAt}};{{.Ports}}"`,
+                `ps ${all ? '-a' : ''} --format  "{{.Names}};{{.Status}};{{.ID}};{{.Image}};{{.Command}};{{.CreatedAt}};{{.Ports}};{{.Labels}}"`,
             );
             return stdout
                 .split('\n')
                 .filter(line => line.trim() !== '')
                 .map(line => {
-                    const [names, statusInfo, id, image, command, createdAt, ports] = line.split(';');
+                    const [names, statusInfo, id, image, command, createdAt, ports, labels] = line.split(';');
                     const [status, ...uptime] = statusInfo.split(' ');
                     let statusKey: ContainerInfo['status'] = status.toLowerCase() as ContainerInfo['status'];
                     if ((statusKey as string) === 'up') {
                         statusKey = 'running';
                     }
-                    return { id, image, command, createdAt, status: statusKey, uptime: uptime.join(' '), ports, names };
+                    return {
+                        id,
+                        image,
+                        command,
+                        createdAt,
+                        status: statusKey,
+                        uptime: uptime.join(' '),
+                        ports,
+                        names,
+                        labels:
+                            labels?.split(',').reduce(
+                                (acc, label) => {
+                                    const [key, value] = label.split('=');
+                                    if (key && value) {
+                                        acc[key] = value;
+                                    }
+                                    return acc;
+                                },
+                                {} as { [key: string]: string },
+                            ) || {},
+                    };
                 });
         } catch (e) {
             this.adapter.log.debug(`Cannot list containers: ${e.message}`);

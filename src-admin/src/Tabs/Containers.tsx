@@ -700,7 +700,18 @@ export default class ContainersTab extends Component<ContainersTabProps, Contain
                     <TableBody>
                         {this.props.containers?.map(container => (
                             <TableRow key={container.id}>
-                                <TableCell>{container.id || '--'}</TableCell>
+                                <TableCell>
+                                    {container.labels?.iobroker ? (
+                                        <div>
+                                            <div>{container.id || '--'}</div>
+                                            <div style={{ opacity: 0.7, fontSize: 'smaller', fontStyle: 'italic' }}>
+                                                {container.labels?.iobroker}
+                                            </div>
+                                        </div>
+                                    ) : (
+                                        container.id || '--'
+                                    )}
+                                </TableCell>
                                 <TableCell>{container.names || '--'}</TableCell>
                                 <TableCell
                                     sx={{

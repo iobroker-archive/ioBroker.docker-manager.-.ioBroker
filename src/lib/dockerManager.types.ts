@@ -599,6 +599,7 @@ export type ContainerInfo = {
     uptime: string;
     ports: string;
     names: string;
+    labels: { [key: string]: string };
     httpLinks?: { [ip: string]: string[] };
 };
 
