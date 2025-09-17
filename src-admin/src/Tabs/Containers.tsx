@@ -609,7 +609,13 @@ export default class ContainersTab extends Component<ContainersTabProps, Contain
                         }}
                         onClick={() => this.setState({ showLinks: null })}
                     >
-                        <a href={link}>{link}</a>
+                        <a
+                            href={link}
+                            target="_blank"
+                            rel="noreferrer"
+                        >
+                            {link}
+                        </a>
                     </MenuItem>
                 ))}
             </Menu>
