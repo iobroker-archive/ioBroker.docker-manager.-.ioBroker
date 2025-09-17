@@ -23,3 +23,5 @@ build
 /src-admin/node_modules/
 /src-admin/build/
 /src-admin/collectI18n.js
+/src-admin/package-lock.json
+package-lock.json
