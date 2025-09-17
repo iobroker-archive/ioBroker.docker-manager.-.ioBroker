@@ -730,7 +730,8 @@ export default class ContainersTab extends Component<ContainersTabProps, Contain
                                 <TableCell>{container.uptime || '--'}</TableCell>
                                 <TableCell
                                     title={
-                                        container.httpLinks?.[window.location.hostname]?.length
+                                        container.httpLinks?.[window.location.hostname]?.length &&
+                                        container.httpLinks[window.location.hostname].length > 1
                                             ? I18n.t('Click to open links')
                                             : undefined
                                     }
@@ -738,10 +739,23 @@ export default class ContainersTab extends Component<ContainersTabProps, Contain
                                         cursor: container.httpLinks?.[window.location.hostname]?.length
                                             ? 'pointer'
                                             : 'default',
+                                        textDecoration: container.httpLinks?.[window.location.hostname]?.length
+                                            ? 'underline'
+                                            : 'none',
+                                        color: container.httpLinks?.[window.location.hostname]?.length
+                                            ? this.props.themeType === 'dark'
+                                                ? '#4da6ff'
+                                                : '#0066ff'
+                                            : 'inherit',
                                     }}
                                     onClick={e => {
-                                        if (container.httpLinks?.[window.location.hostname]?.length) {
+                                        const len = container.httpLinks?.[window.location.hostname]?.length;
+                                        if (len && len > 1) {
+                                            // show menu
                                             this.setState({ showLinks: { anchorEl: e.currentTarget, container } });
+                                        } else if (len === 1) {
+                                            // open link
+                                            window.open(container.httpLinks![window.location.hostname][0], '_blank');
                                         }
                                     }}
                                 >
