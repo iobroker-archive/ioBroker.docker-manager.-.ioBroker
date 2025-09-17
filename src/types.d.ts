@@ -1,4 +1,4 @@
-import type { DockerContainerInspect } from './dockerManager.types.ts';
+import type { DockerContainerInspect } from './lib/dockerManager.types.ts';
 
 export type GUIRequestInfo = {
     type: 'info';
