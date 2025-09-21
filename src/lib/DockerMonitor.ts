@@ -186,6 +186,22 @@ export default class DockerMonitor extends DockerManager {
         }
     }
 
+    async imagePrune(): Promise<{ stdout: string; stderr: string; images?: ImageInfo[] }> {
+        try {
+            const result = await super.imagePrune();
+            const images = await this.imageList();
+            if (images) {
+                await this.#adapter.sendToGui({
+                    command: 'images',
+                    data: images,
+                });
+            }
+            return { ...result, images };
+        } catch (e) {
+            return { stdout: '', stderr: e.message.toString() };
+        }
+    }
+
     async containerStop(
         container: ContainerName,
     ): Promise<{ stdout: string; stderr: string; containers?: ContainerInfo[] }> {
@@ -247,6 +263,22 @@ export default class DockerMonitor extends DockerManager {
                 });
             }
             return result;
+        } catch (e) {
+            return { stdout: '', stderr: e.message.toString() };
+        }
+    }
+
+    async containerPrune(): Promise<{ stdout: string; stderr: string; containers?: ContainerInfo[] }> {
+        try {
+            const result = await super.containerPrune();
+            const containers = await this.containerList();
+            if (containers) {
+                await this.#adapter.sendToGui({
+                    command: 'containers',
+                    data: containers,
+                });
+            }
+            return { ...result, containers };
         } catch (e) {
             return { stdout: '', stderr: e.message.toString() };
         }
@@ -437,6 +469,22 @@ export default class DockerMonitor extends DockerManager {
         }
     }
 
+    async networkPrune(): Promise<{ stdout: string; stderr: string; networks?: NetworkInfo[] }> {
+        try {
+            const result = await super.networkPrune();
+            const networks = await this.networkList();
+            if (networks) {
+                await this.#adapter.sendToGui({
+                    command: 'networks',
+                    data: networks,
+                });
+            }
+            return { ...result, networks };
+        } catch (e) {
+            return { stdout: '', stderr: e.message.toString() };
+        }
+    }
+
     async volumeCreate(
         volumeName: string,
         driver?: VolumeDriver,
@@ -466,6 +514,22 @@ export default class DockerMonitor extends DockerManager {
                 });
             }
             return result;
+        } catch (e) {
+            return { stdout: '', stderr: e.message.toString() };
+        }
+    }
+
+    async volumePrune(): Promise<{ stdout: string; stderr: string; volumes?: VolumeInfo[] }> {
+        try {
+            const result = await super.volumePrune();
+            const volumes = await this.volumeList();
+            if (volumes) {
+                await this.#adapter.sendToGui({
+                    command: 'volumes',
+                    data: volumes,
+                });
+            }
+            return { ...result, volumes };
         } catch (e) {
             return { stdout: '', stderr: e.message.toString() };
         }

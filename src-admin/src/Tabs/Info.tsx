@@ -10,7 +10,12 @@ interface InfoTabProps {
     alive: boolean;
     instance: number;
     info?: DiskUsage;
-    version?: string;
+    dockerInfo?: {
+        version?: string;
+        daemonRunning?: boolean;
+        removeSupported?: boolean;
+        driver: 'socket' | 'cli' | 'http' | 'https';
+    } | null;
 }
 
 export default function InfoTab(props: InfoTabProps): React.JSX.Element {
@@ -30,7 +35,12 @@ export default function InfoTab(props: InfoTabProps): React.JSX.Element {
             </InfoBox>
             <div>
                 <div>
-                    {I18n.t('Version')}: {props.version || '--'}
+                    <span>
+                        {I18n.t('Version')}: {props.dockerInfo?.version || '--'},
+                    </span>
+                    <span style={{ marginLeft: 10 }}>
+                        {I18n.t('Driver')}: {props.dockerInfo?.driver || '--'}
+                    </span>
                 </div>
                 <h2>{I18n.t('Disk usage')}</h2>
             </div>

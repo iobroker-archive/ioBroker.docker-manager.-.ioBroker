@@ -44,11 +44,13 @@ interface ImagesTabProps {
     images: ImageInfo[] | undefined;
     containers: ContainerInfo[] | undefined;
     themeType: ThemeType;
+    removeSupported: boolean;
 }
 
 interface ImagesTabState {
     showAddDialog: boolean;
     showDeleteDialog: string;
+    showPruneDialog: boolean;
     addImageName: string;
     addImageTag: string;
     requesting: boolean;
@@ -77,6 +79,7 @@ export default class ImagesTab extends Component<ImagesTabProps, ImagesTabState>
             dockerInspect: null,
             imagesTags: {},
             imageAutocomplete: {},
+            showPruneDialog: false,
         };
     }
 
@@ -448,6 +451,69 @@ export default class ImagesTab extends Component<ImagesTabProps, ImagesTabState>
         );
     }
 
+    renderConfirmPruneDialog(): React.JSX.Element | null {
+        if (!this.state.showPruneDialog) {
+            return null;
+        }
+
+        return (
+            <Dialog
+                open={!0}
+                onClose={() => this.setState({ showPruneDialog: false })}
+            >
+                <DialogTitle>{I18n.t('Prune unused images')}</DialogTitle>
+                <DialogContent>
+                    {I18n.t('Are you sure you want to delete unused images?', this.state.showPruneDialog)}
+                </DialogContent>
+                <DialogActions>
+                    <Button
+                        variant="contained"
+                        color="primary"
+                        disabled={this.state.requesting}
+                        onClick={() => {
+                            this.setState({ requesting: true }, async () => {
+                                try {
+                                    const result: { result: { stdout: string; stderr: string } } =
+                                        await this.props.socket.sendTo(
+                                            `docker-manager.${this.props.instance}`,
+                                            'image:prune',
+                                            {
+                                                id: this.state.showDeleteDialog,
+                                            },
+                                        );
+                                    this.setState({
+                                        showPruneDialog: false,
+                                        requesting: false,
+                                        showHint: result?.result.stdout || '',
+                                        showError: result?.result.stderr || '',
+                                    });
+                                } catch (e) {
+                                    console.error(`Cannot prune images: ${e}`);
+                                    alert(`Cannot prune images: ${e}`);
+                                    this.setState({
+                                        requesting: false,
+                                        showError: `Cannot prune images: ${e}`,
+                                    });
+                                }
+                            });
+                        }}
+                        startIcon={this.state.requesting ? <CircularProgress size={24} /> : <DeleteIcon />}
+                    >
+                        {I18n.t('Delete')}
+                    </Button>
+                    <Button
+                        variant="contained"
+                        color="grey"
+                        onClick={() => this.setState({ showPruneDialog: false })}
+                        startIcon={<CloseIcon />}
+                    >
+                        {I18n.t('Cancel')}
+                    </Button>
+                </DialogActions>
+            </Dialog>
+        );
+    }
+
     render(): React.JSX.Element {
         return (
             <Paper style={{ width: 'calc(100% - 8px)', height: 'calc(100% - 8px)', padding: 4 }}>
@@ -456,6 +522,7 @@ export default class ImagesTab extends Component<ImagesTabProps, ImagesTabState>
                 {this.renderErrorDialog()}
                 {this.renderSnackbar()}
                 {this.renderInspect()}
+                {this.renderConfirmPruneDialog()}
                 <InfoBox
                     type="info"
                     closeable
@@ -495,7 +562,15 @@ export default class ImagesTab extends Component<ImagesTabProps, ImagesTabState>
                             <TableCell style={{ fontWeight: 'bold' }}>{I18n.t('Image ID')}</TableCell>
                             <TableCell style={{ fontWeight: 'bold' }}>{I18n.t('Created')}</TableCell>
                             <TableCell style={{ fontWeight: 'bold' }}>{I18n.t('Size')}</TableCell>
-                            <TableCell />
+                            <TableCell style={{ textAlign: 'right' }}>
+                                <IconButton
+                                    title={I18n.t('Prune unused containers')}
+                                    disabled={!this.props.alive || this.state.requesting}
+                                    onClick={() => this.setState({ showPruneDialog: true })}
+                                >
+                                    <DeleteIcon />
+                                </IconButton>
+                            </TableCell>
                         </TableRow>
                     </TableHead>
                     <TableBody>
@@ -536,7 +611,7 @@ export default class ImagesTab extends Component<ImagesTabProps, ImagesTabState>
                                         : '--'}
                                 </TableCell>
                                 <TableCell>{size2string(image.size)}</TableCell>
-                                <TableCell>
+                                <TableCell style={{ textAlign: 'right' }}>
                                     <IconButton
                                         size="small"
                                         title={I18n.t('Information about image')}

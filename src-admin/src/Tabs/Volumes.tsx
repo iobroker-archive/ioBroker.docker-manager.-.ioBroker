@@ -33,12 +33,14 @@ interface VolumesTabProps {
     alive: boolean;
     instance: number;
     volumes: VolumeInfo[] | undefined;
+    removeSupported: boolean;
 }
 
 interface VolumesTabState {
     showAddDialog: boolean;
     showDeleteDialog: string;
     addVolumePath: string;
+    showPruneDialog: boolean;
     addVolumeName: string;
     addNetworkDriver: NetworkDriver | '';
     requesting: boolean;
@@ -58,6 +60,7 @@ export default class VolumesTab extends Component<VolumesTabProps, VolumesTabSta
             requesting: false,
             showHint: '',
             showError: '',
+            showPruneDialog: false,
         };
     }
 
@@ -299,6 +302,69 @@ export default class VolumesTab extends Component<VolumesTabProps, VolumesTabSta
         );
     }
 
+    renderConfirmPruneDialog(): React.JSX.Element | null {
+        if (!this.state.showPruneDialog) {
+            return null;
+        }
+
+        return (
+            <Dialog
+                open={!0}
+                onClose={() => this.setState({ showPruneDialog: false })}
+            >
+                <DialogTitle>{I18n.t('Prune unused volumes')}</DialogTitle>
+                <DialogContent>
+                    {I18n.t('Are you sure you want to delete unused volumes?', this.state.showPruneDialog)}
+                </DialogContent>
+                <DialogActions>
+                    <Button
+                        variant="contained"
+                        color="primary"
+                        disabled={this.state.requesting}
+                        onClick={() => {
+                            this.setState({ requesting: true }, async () => {
+                                try {
+                                    const result: { result: { stdout: string; stderr: string } } =
+                                        await this.props.socket.sendTo(
+                                            `docker-manager.${this.props.instance}`,
+                                            'volume:prune',
+                                            {
+                                                id: this.state.showDeleteDialog,
+                                            },
+                                        );
+                                    this.setState({
+                                        showPruneDialog: false,
+                                        requesting: false,
+                                        showHint: result?.result.stdout || '',
+                                        showError: result?.result.stderr || '',
+                                    });
+                                } catch (e) {
+                                    console.error(`Cannot prune volumes: ${e}`);
+                                    alert(`Cannot prune volumes: ${e}`);
+                                    this.setState({
+                                        requesting: false,
+                                        showError: `Cannot prune volumes: ${e}`,
+                                    });
+                                }
+                            });
+                        }}
+                        startIcon={this.state.requesting ? <CircularProgress size={24} /> : <DeleteIcon />}
+                    >
+                        {I18n.t('Delete')}
+                    </Button>
+                    <Button
+                        variant="contained"
+                        color="grey"
+                        onClick={() => this.setState({ showPruneDialog: false })}
+                        startIcon={<CloseIcon />}
+                    >
+                        {I18n.t('Cancel')}
+                    </Button>
+                </DialogActions>
+            </Dialog>
+        );
+    }
+
     render(): React.JSX.Element {
         return (
             <Paper style={{ width: 'calc(100% - 8px)', height: 'calc(100% - 8px)', padding: 4 }}>
@@ -306,6 +372,7 @@ export default class VolumesTab extends Component<VolumesTabProps, VolumesTabSta
                 {this.renderConfirmDialog()}
                 {this.renderErrorDialog()}
                 {this.renderSnackbar()}
+                {this.renderConfirmPruneDialog()}
                 <InfoBox
                     type="info"
                     closeable
@@ -347,7 +414,15 @@ export default class VolumesTab extends Component<VolumesTabProps, VolumesTabSta
                             </TableCell>
                             <TableCell style={{ fontWeight: 'bold' }}>{I18n.t('Driver')}</TableCell>
                             <TableCell style={{ fontWeight: 'bold' }}>{I18n.t('Volume')}</TableCell>
-                            <TableCell />
+                            <TableCell style={{ textAlign: 'right' }}>
+                                <IconButton
+                                    title={I18n.t('Prune unused containers')}
+                                    disabled={!this.props.alive || this.state.requesting}
+                                    onClick={() => this.setState({ showPruneDialog: true })}
+                                >
+                                    <DeleteIcon />
+                                </IconButton>
+                            </TableCell>
                         </TableRow>
                     </TableHead>
                     <TableBody>
@@ -356,7 +431,7 @@ export default class VolumesTab extends Component<VolumesTabProps, VolumesTabSta
                                 <TableCell style={{ fontWeight: 'bold' }}>{volume.name}</TableCell>
                                 <TableCell>{volume.driver || '--'}</TableCell>
                                 <TableCell>{volume.volume}</TableCell>
-                                <TableCell>
+                                <TableCell style={{ textAlign: 'right' }}>
                                     <IconButton
                                         size="small"
                                         title={I18n.t('Delete volume')}

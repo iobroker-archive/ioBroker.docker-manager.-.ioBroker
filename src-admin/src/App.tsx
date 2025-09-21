@@ -34,7 +34,7 @@ import type {
     NetworkInfo,
     VolumeInfo,
 } from './dockerManager.types';
-import type { GUIResponse } from './types';
+import type { DockerManagerAdapterConfig, GUIResponse } from './types';
 
 const styles: { [styleName: string]: any } = {
     tabContent: {
@@ -60,14 +60,20 @@ import ImagesTab from './Tabs/Images';
 import ContainersTab from './Tabs/Containers';
 import NetworksTab from './Tabs/Networks';
 import VolumesTab from './Tabs/Volumes';
+import OptionsTab from './Tabs/Options';
 
 interface AppState extends GenericAppState {
-    selectedTab: 'info' | 'images' | 'containers' | 'networks' | 'volumes';
+    selectedTab: 'info' | 'images' | 'containers' | 'networks' | 'volumes' | 'options';
     ready: boolean;
     alive: boolean;
     backendRunning: boolean;
     info?: DiskUsage;
-    version?: string;
+    dockerInfo: {
+        version?: string;
+        daemonRunning?: boolean;
+        removeSupported?: boolean;
+        driver: 'socket' | 'cli' | 'http' | 'https';
+    } | null;
     error?: string;
     containers?: ContainerInfo[];
     networks?: NetworkInfo[];
@@ -115,17 +121,24 @@ export default class App extends GenericApp<GenericAppProps, AppState> {
 
         super(props, extendedProps);
 
+        let selectedTab =
+            (window.localStorage.getItem(`${this.adapterName}.${this.instance}.selectedTab`) as
+                | 'info'
+                | 'images'
+                | 'options'
+                | 'containers'
+                | 'networks') || 'info';
+        if (this.isTab && selectedTab === 'options') {
+            selectedTab = 'info';
+        }
+
         this.state = {
             ...this.state,
             alive: false,
             backendRunning: false,
             container: {},
-            selectedTab:
-                (window.localStorage.getItem(`${this.adapterName}.${this.instance}.selectedTab`) as
-                    | 'info'
-                    | 'images'
-                    | 'containers'
-                    | 'networks') || 'info',
+            dockerInfo: null,
+            selectedTab,
             ready: false,
         };
 
@@ -238,13 +251,23 @@ export default class App extends GenericApp<GenericAppProps, AppState> {
     };
 
     async onConnectionReady(): Promise<void> {
+        super.onConnectionReady();
         const alive = await this.socket.getState(`system.adapter.docker-manager.${this.instance}.alive`);
-
+        // request version on start
+        const dockerInfo: {
+            result: {
+                version?: string;
+                daemonRunning?: boolean;
+                removeSupported?: boolean;
+                driver: 'socket' | 'cli' | 'http' | 'https';
+            };
+        } = await this.socket.sendTo(`docker-manager.${this.instance}`, 'info', {});
         if (alive?.val) {
             this.refreshBackendSubscription(true);
         }
 
         this.setState({
+            dockerInfo: dockerInfo.result,
             ready: true,
             alive: !!alive?.val,
         });
@@ -283,10 +306,12 @@ export default class App extends GenericApp<GenericAppProps, AppState> {
             return;
         }
         if (update.command === 'info') {
-            this.setState({ info: update.data, version: update.version || 'unknown', error: update.error });
+            this.setState({ info: update.data, error: update.error });
         } else if (update.command === 'networks') {
+            update.data?.sort((a, b) => a.name.localeCompare(b.name));
             this.setState({ networks: update.data, error: update.error });
         } else if (update.command === 'volumes') {
+            update.data?.sort((a, b) => a.name.localeCompare(b.name));
             this.setState({ volumes: update.data, error: update.error });
         } else if (update.command === 'images') {
             update.data?.sort((a, b) => {
@@ -339,7 +364,7 @@ export default class App extends GenericApp<GenericAppProps, AppState> {
                 socket={this.socket}
                 instance={this.instance}
                 info={this.state.info}
-                version={this.state.version}
+                dockerInfo={this.state.dockerInfo}
             />
         );
     }
@@ -353,6 +378,7 @@ export default class App extends GenericApp<GenericAppProps, AppState> {
                 images={this.state.images}
                 containers={this.state.containers}
                 themeType={this.state.themeType}
+                removeSupported={!!this.state.dockerInfo?.removeSupported}
             />
         );
     }
@@ -370,6 +396,7 @@ export default class App extends GenericApp<GenericAppProps, AppState> {
                 networks={this.state.networks}
                 themeType={this.state.themeType}
                 onExecuteCommand={this.onExecuteCommand}
+                removeSupported={!!this.state.dockerInfo?.removeSupported}
             />
         );
     }
@@ -381,6 +408,7 @@ export default class App extends GenericApp<GenericAppProps, AppState> {
                 socket={this.socket}
                 instance={this.instance}
                 networks={this.state.networks}
+                removeSupported={!!this.state.dockerInfo?.removeSupported}
             />
         );
     }
@@ -392,6 +420,21 @@ export default class App extends GenericApp<GenericAppProps, AppState> {
                 socket={this.socket}
                 instance={this.instance}
                 volumes={this.state.volumes}
+                removeSupported={!!this.state.dockerInfo?.removeSupported}
+            />
+        );
+    }
+
+    renderOptionsTab(): React.ReactNode {
+        return (
+            <OptionsTab
+                socket={this.socket}
+                native={this.state.native as DockerManagerAdapterConfig}
+                onChange={(id: string, value: any) => {
+                    return new Promise<void>(resolve => {
+                        this.updateNativeValue(id, value, resolve);
+                    });
+                }}
             />
         );
     }
@@ -457,6 +500,13 @@ export default class App extends GenericApp<GenericAppProps, AppState> {
                                     label={I18n.t('Containers')}
                                     value="containers"
                                 />
+                                {this.isTab ? null : (
+                                    <Tab
+                                        sx={{ '&.Mui-selected': styles.selected }}
+                                        label={I18n.t('Options')}
+                                        value="options"
+                                    />
+                                )}
 
                                 <div style={{ flexGrow: 1 }} />
                                 {this.state.alive ? null : (
@@ -499,9 +549,10 @@ export default class App extends GenericApp<GenericAppProps, AppState> {
                             {this.state.selectedTab === 'containers' && this.renderContainersTab()}
                             {this.state.selectedTab === 'networks' && this.renderNetworksTab()}
                             {this.state.selectedTab === 'volumes' && this.renderVolumesTab()}
+                            {this.state.selectedTab === 'options' && this.renderOptionsTab()}
                         </div>
                         {this.renderError()}
-                        {this.state.selectedTab === 'containers' ? this.renderSaveCloseButtons() : null}
+                        {this.state.selectedTab === 'options' ? this.renderSaveCloseButtons() : null}
                     </div>
                 </ThemeProvider>
             </StyledEngineProvider>

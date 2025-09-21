@@ -20,6 +20,9 @@ import type {
     VolumeInfo,
     VolumeDriver,
 } from './dockerManager.types';
+import { createConnection } from 'node:net';
+import Docker, { type MountPropagation, type MountSettings, type MountType } from 'dockerode';
+import tar from 'tar-fs';
 
 const execPromise = promisify(exec);
 
@@ -68,11 +71,12 @@ function deepCompare(object1: any, object2: any): boolean {
         return true;
     }
     const keys1 = Object.keys(object1);
-    const keys2 = Object.keys(object2);
-    if (keys1.length !== keys2.length) {
-        return false;
-    }
     for (const key of keys1) {
+        // ignore iob* properties as they belong to ioBroker configuration
+        // ignore hostname
+        if (key.startsWith('iob') || key === 'hostname') {
+            continue;
+        }
         if (!deepCompare(object1[key], object2[key])) {
             return false;
         }
@@ -88,11 +92,8 @@ function compareConfigs(desired: ContainerConfig, existing: ContainerConfig): st
     // We only compare keys that are in the desired config
     for (const key of keys) {
         // ignore iob* properties as they belong to ioBroker configuration
-        if (key.startsWith('iob')) {
-            continue;
-        }
         // ignore hostname
-        if (key === 'hostname') {
+        if (key.startsWith('iob') || key === 'hostname') {
             continue;
         }
         if (typeof desired[key] === 'object' && desired[key] !== null) {
@@ -154,7 +155,7 @@ function removeUndefined(obj: any): any {
     return obj;
 }
 
-function cleanContainerConfig(obj: ContainerConfig): ContainerConfig {
+function cleanContainerConfig(obj: ContainerConfig, mayChange?: boolean): ContainerConfig {
     obj = removeUndefined(obj);
 
     Object.keys(obj).forEach(name => {
@@ -168,6 +169,11 @@ function cleanContainerConfig(obj: ContainerConfig): ContainerConfig {
             }
             obj.mounts = obj.mounts.map((mount: any) => {
                 const m = { ...mount };
+                // /var/lib/docker/volumes/influxdb_0_flux_config/_data
+                if (mayChange && m.source.includes('/docker/volumes') && m.source.endsWith('/_data')) {
+                    const parts = m.source.split('/');
+                    m.source = parts[parts.length - 2];
+                }
                 delete m.readOnly;
                 return m;
             });
@@ -215,11 +221,47 @@ function cleanContainerConfig(obj: ContainerConfig): ContainerConfig {
                     .sort()
                     .forEach(key => {
                         if (key && env[key]) {
-                            (obj.environment as any)[key] = env[key];
+                            obj.environment![key] = env[key];
                         }
                     });
             } else {
                 delete obj.environment;
+            }
+            if (!Object.keys(env).length) {
+                delete obj.environment;
+            }
+        }
+        if (name === 'labels') {
+            if (!obj.labels) {
+                delete obj.labels;
+                return;
+            }
+            const labels = obj.labels as { [key: string]: string };
+            if (Object.keys(labels).length) {
+                obj.labels = {};
+                Object.keys(labels)
+                    .sort()
+                    .forEach(key => {
+                        if (key && labels[key]) {
+                            obj.labels![key] = labels[key];
+                        }
+                    });
+            } else {
+                delete obj.labels;
+            }
+            if (!Object.keys(labels).length) {
+                delete obj.labels;
+            }
+        }
+        if (name === 'volumes') {
+            if (!obj.volumes?.length) {
+                delete obj.volumes;
+                return;
+            }
+            obj.volumes = obj.volumes.map(v => v.trim()).filter(v => v);
+            obj.volumes.sort();
+            if (!obj.volumes?.length) {
+                delete obj.volumes;
             }
         }
     });
@@ -233,15 +275,21 @@ export default class DockerManager {
     protected dockerVersion: string = '';
     protected needSudo: boolean = false;
     readonly #waitReady: Promise<void>;
+    readonly #waitAllChecked: Promise<void>;
+    #waitAllCheckedResolve: (() => void) | undefined;
     readonly adapter: ioBroker.Adapter;
     readonly #ownContainers: ContainerConfig[] = [];
     #monitoringInterval: NodeJS.Timeout | null = null;
     #ownContainersStats: { [name: string]: ContainerStatus } = {};
+    #driver: 'socket' | 'cli' | 'http' | 'https' = 'cli';
+    #dockerode: Docker | null = null;
+    #cliAvailable: boolean = false;
 
     constructor(adapter: ioBroker.Adapter, containers?: ContainerConfig[]) {
         this.adapter = adapter;
         this.#ownContainers = containers || [];
         this.#waitReady = new Promise<void>(resolve => this.#init().then(() => resolve()));
+        this.#waitAllChecked = new Promise<void>(resolve => (this.#waitAllCheckedResolve = resolve));
     }
 
     /** Wait till the check if docker is installed and the daemon is running is ready */
@@ -267,11 +315,11 @@ export default class DockerManager {
             macAddress: inspect.NetworkSettings.MacAddress ?? undefined,
             environment: inspect.Config.Env
                 ? Object.fromEntries(
-                      inspect.Config.Env.map(e => {
-                          const [key, ...rest] = e.split('=');
-                          return [key, rest.join('=')];
-                      }),
-                  )
+                    inspect.Config.Env.map(e => {
+                        const [key, ...rest] = e.split('=');
+                        return [key, rest.join('=')];
+                    }),
+                )
                 : undefined,
             labels: inspect.Config.Labels ?? undefined,
             tty: inspect.Config.Tty,
@@ -283,13 +331,13 @@ export default class DockerManager {
             publishAllPorts: inspect.HostConfig.PublishAllPorts,
             ports: inspect.HostConfig.PortBindings
                 ? Object.entries(inspect.HostConfig.PortBindings).flatMap(([containerPort, bindings]) =>
-                      bindings.map(binding => ({
-                          containerPort: containerPort.split('/')[0],
-                          protocol: (containerPort.split('/')[1] as 'tcp' | 'udp') || 'tcp',
-                          hostPort: binding.HostPort,
-                          hostIP: binding.HostIp,
-                      })),
-                  )
+                    bindings.map(binding => ({
+                        containerPort: containerPort.split('/')[0],
+                        protocol: (containerPort.split('/')[1] as 'tcp' | 'udp') || 'tcp',
+                        hostPort: binding.HostPort,
+                        hostIP: binding.HostIp,
+                    })),
+                )
                 : undefined,
             mounts: inspect.Mounts?.map(mount => ({
                 type: mount.Type,
@@ -307,12 +355,12 @@ export default class DockerManager {
             networkMode: inspect.HostConfig.NetworkMode,
             networks: inspect.NetworkSettings.Networks
                 ? Object.entries(inspect.NetworkSettings.Networks).map(([name, net]) => ({
-                      name,
-                      aliases: net.Aliases ?? undefined,
-                      ipv4Address: net.IPAddress,
-                      ipv6Address: net.GlobalIPv6Address,
-                      driverOpts: net.DriverOpts ?? undefined,
-                  }))
+                    name,
+                    aliases: net.Aliases ?? undefined,
+                    ipv4Address: net.IPAddress,
+                    ipv6Address: net.GlobalIPv6Address,
+                    driverOpts: net.DriverOpts ?? undefined,
+                }))
                 : undefined,
             restart: {
                 policy: inspect.HostConfig.RestartPolicy.Name as any,
@@ -358,7 +406,7 @@ export default class DockerManager {
             __meta: undefined, // Eigene Metadaten
         };
 
-        return cleanContainerConfig(obj);
+        return cleanContainerConfig(obj, true);
     }
 
     /**
@@ -369,16 +417,81 @@ export default class DockerManager {
     async getDockerDaemonInfo(): Promise<{
         version?: string;
         daemonRunning?: boolean;
+        removeSupported?: boolean;
+        driver: 'socket' | 'cli' | 'http' | 'https';
     }> {
         await this.isReady();
         const daemonRunning = await this.#isDockerDaemonRunning();
         return {
             version: this.dockerVersion,
             daemonRunning,
+            removeSupported: !this.#dockerode || this.#cliAvailable,
+            driver: this.#driver,
         };
     }
 
+    static checkDockerSocket(): Promise<boolean> {
+        return new Promise<boolean>(resolve => {
+            const socket = createConnection({ path: '/var/run/docker.sock' }, () => {
+                socket.end();
+                resolve(true);
+            });
+            socket.on('error', e => {
+                console.error(`Cannot connect to docker socket: ${e.message}`);
+                resolve(false);
+            });
+        });
+    }
+
+    static async isDockerApiRunningOnPort(port: number, host = 'localhost'): Promise<boolean> {
+        return new Promise(resolve => {
+            const socket = createConnection({ port, host }, () => {
+                socket.write('GET /version HTTP/1.0\r\nHost: localhost\r\n\r\n');
+            });
+
+            let data = '';
+            socket.on('data', chunk => (data += chunk.toString()));
+
+            socket.on('end', () => {
+                resolve(data.includes('Docker') || data.includes('Api-Version'));
+            });
+
+            socket.on('error', () => resolve(false));
+        });
+    }
+
     async #init(): Promise<void> {
+        // first of all detects which way is available:
+        // - '/var/run/docker.sock',
+        // - http://localhost:2375,
+        // - https://localhost:2376 or
+        // - CLI
+        // Probe the socket
+        if (await DockerManager.checkDockerSocket()) {
+            this.#driver = 'socket';
+            this.#dockerode = new Docker({ socketPath: '/var/run/docker.sock' });
+        } else if (await DockerManager.isDockerApiRunningOnPort(2375)) {
+            this.#driver = 'http';
+            this.#dockerode = new Docker({ protocol: 'http', host: '127.0.0.1', port: 2375 });
+        } else if (await DockerManager.isDockerApiRunningOnPort(2376)) {
+            this.#driver = 'http';
+            this.#dockerode = new Docker({ protocol: 'http', host: '127.0.0.1', port: 2376 });
+        } else {
+            this.#driver = 'cli';
+            this.#cliAvailable = true;
+        }
+
+        if (!this.#cliAvailable) {
+            try {
+                const result = await execPromise('docker --version');
+                if (!result.stderr && result.stdout) {
+                    this.#cliAvailable = true;
+                }
+            } catch {
+                // ignore
+            }
+        }
+
         const version = await this.#isDockerInstalled();
         this.installed = !!version;
         if (version) {
@@ -395,12 +508,18 @@ export default class DockerManager {
             }
         }
         if (this.installed) {
+            // we still must check the sudo as autocompletion works only via CLI
             this.needSudo = await this.#isNeedSudo();
             await this.#checkOwnContainers();
+        } else {
+            this.#waitAllCheckedResolve?.();
         }
     }
 
     async #isDockerDaemonRunning(): Promise<boolean> {
+        if (this.#dockerode) {
+            return true;
+        }
         try {
             const { stdout, stderr } = await execPromise('systemctl status docker');
             // ● docker.service - Docker Application Container Engine
@@ -478,6 +597,7 @@ export default class DockerManager {
 
     async #checkOwnContainers(): Promise<void> {
         if (!this.#ownContainers.length) {
+            this.#waitAllCheckedResolve?.();
             return;
         }
         const status = await this.containerList(true);
@@ -511,6 +631,33 @@ export default class DockerManager {
                             networkChecked.push(container.networkMode);
                         }
                     }
+
+                    // create all volumes ourselves, to have a static name
+                    if (container.mounts?.find(m => m.type === 'volume')) {
+                        // check if the volume exists
+                        const volumes = await this.volumeList();
+                        for (const mount of container.mounts) {
+                            if (mount.type === 'volume' && mount.source) {
+                                const volume = volumes.find(v => v.name === mount.source);
+                                if (!volume) {
+                                    this.adapter.log.info(`Creating docker volume ${mount.source}`);
+                                    const result = await this.volumeCreate(mount.source);
+                                    if (result.stderr) {
+                                        this.adapter.log.warn(`Cannot create volume ${mount.source}: ${result.stderr}`);
+                                        continue;
+                                    }
+                                    // Copy data from host to volume
+                                    if (mount.iobAutoCopyFrom) {
+                                        await this.volumeCopyTo(mount.source, mount.iobAutoCopyFrom);
+                                    }
+                                } else if (mount.iobAutoCopyFromForce && mount.iobAutoCopyFrom) {
+                                    // Copy data from host to volume
+                                    await this.volumeCopyTo(mount.source, mount.iobAutoCopyFrom);
+                                }
+                            }
+                        }
+                    }
+
                     let containerInfo = status.find(it => it.names === container.name);
                     let image = images.find(it => `${it.repository}:${it.tag}` === container.image);
                     if (container.iobAutoImageUpdate) {
@@ -578,6 +725,11 @@ export default class DockerManager {
         if (anyStartedOrRunning) {
             this.#monitoringInterval ||= setInterval(() => this.#monitorOwnContainers(), 60000);
         }
+        this.#waitAllCheckedResolve?.();
+    }
+
+    allOwnContainersChecked(): Promise<void> {
+        return this.#waitAllChecked;
     }
 
     async #monitorOwnContainers(): Promise<void> {
@@ -695,15 +847,26 @@ export default class DockerManager {
     }
 
     async #isDockerInstalled(): Promise<string | false> {
-        try {
-            const result = await execPromise('docker --version');
-            if (!result.stderr && result.stdout) {
-                // "Docker version 28.3.2, build 578ccf6\n"
-                return result.stdout.split('\n')[0].trim();
+        if (this.#driver === 'cli') {
+            try {
+                const result = await execPromise('docker --version');
+                if (!result.stderr && result.stdout) {
+                    // "Docker version 28.3.2, build 578ccf6\n"
+                    return result.stdout.split('\n')[0].trim();
+                }
+                this.adapter.log.debug(`Docker not installed: ${result.stderr}`);
+            } catch (e) {
+                this.adapter.log.debug(`Docker not installed: ${e.message}`);
             }
-            this.adapter.log.debug(`Docker not installed: ${result.stderr}`);
-        } catch (e) {
-            this.adapter.log.debug(`Docker not installed: ${e.message}`);
+        } else if (this.#dockerode) {
+            try {
+                const info = await this.#dockerode.version();
+                if (info?.Version) {
+                    return `Docker version ${info.Version}, api version: ${info.ApiVersion}`;
+                }
+            } catch (e) {
+                this.adapter.log.debug(`Docker not installed: ${e.message}`);
+            }
         }
         return false;
     }
@@ -719,6 +882,62 @@ export default class DockerManager {
 
     /** Get disk usage information */
     async discUsage(): Promise<DiskUsage> {
+        if (this.#dockerode) {
+            const info = await this.#dockerode.df();
+            const result: DiskUsage = { total: { size: 0, reclaimable: 0 } };
+
+            if (info.Images) {
+                let size = 0;
+                let reclaimable = 0;
+                for (const image of info.Images) {
+                    size += image.Size;
+                    reclaimable += image.SharedSize + image.VirtualSize;
+                }
+                result.images = {
+                    total: info.Images.length,
+                    // @ts-expect-error todo
+                    active: info.Images.filter(img => img.Containers > 0).length,
+                    size,
+                    reclaimable,
+                };
+                result.total.size += size;
+                result.total.reclaimable += reclaimable;
+            }
+
+            if (info.Containers) {
+                let size = 0;
+                for (const container of info.Containers) {
+                    size += container.SizeRootFs || 0;
+                }
+                result.containers = {
+                    total: info.Containers.length,
+                    // @ts-expect-error todo
+                    active: info.Containers.filter(cont => cont.State === 'running').length,
+                    size,
+                    reclaimable: 0, // Not available
+                };
+                result.total.size += size;
+            }
+
+            if (info.Volumes) {
+                let size = 0;
+                for (const volume of info.Volumes) {
+                    size += volume.UsageData?.Size || 0;
+                }
+                result.volumes = {
+                    total: info.Volumes.length,
+                    // @ts-expect-error todo
+                    active: info.Volumes.filter(vol => vol.UsageData?.RefCount && vol.UsageData.RefCount > 0).length,
+                    size,
+                    reclaimable: 0, // Not available
+                };
+                result.total.size += size;
+            }
+
+            // Build cache not available
+
+            return result;
+        }
         const { stdout } = await this.#exec(`system df`);
         const result: DiskUsage = { total: { size: 0, reclaimable: 0 } };
         // parse the output
@@ -788,10 +1007,30 @@ export default class DockerManager {
 
     /** Pull an image from the registry */
     async imagePull(image: ImageName): Promise<{ stdout: string; stderr: string; images?: ImageInfo[] }> {
-        try {
-            if (!image.includes(':')) {
-                image += ':latest';
+        if (!image.includes(':')) {
+            image += ':latest';
+        }
+        if (this.#dockerode) {
+            const stream = await this.#dockerode.pull(image);
+            if (!stream) {
+                throw new Error('No stream returned');
             }
+            return new Promise<{ stdout: string; stderr: string; images?: ImageInfo[] }>((resolve, reject) => {
+                const onFinished = (err: Error | null): void => {
+                    if (err) {
+                        return reject(err);
+                    }
+                    this.imageList()
+                        .then(images => resolve({ stdout: `Image ${image} pulled`, stderr: '', images }))
+                        .catch(reject);
+                };
+                const onProgress = (event: any): void => {
+                    this.adapter.log.debug(JSON.stringify(event));
+                };
+                this.#dockerode!.modem.followProgress(stream, onFinished, onProgress);
+            });
+        }
+        try {
             const result = await this.#exec(`pull ${image}`);
             const images = await this.imageList();
             if (!images.find(it => `${it.repository}:${it.tag}` === image)) {
@@ -835,12 +1074,202 @@ export default class DockerManager {
         }
     }
 
+    static getDockerodeConfig(config: ContainerConfig): Docker.ContainerCreateOptions {
+        let mounts: MountSettings[] | undefined;
+        if (config.mounts) {
+            for (const mount of config.mounts) {
+                let volumeOptions:
+                    | {
+                    NoCopy: boolean;
+                    Labels: { [label: string]: string };
+                    DriverConfig: {
+                        Name: string;
+                        Options: { [option: string]: string };
+                    };
+                    Subpath?: string;
+                }
+                    | undefined;
+                if (mount.volumeOptions) {
+                    if (mount.volumeOptions.nocopy !== undefined) {
+                        volumeOptions ||= {} as {
+                            NoCopy: boolean;
+                            Labels: { [label: string]: string };
+                            DriverConfig: {
+                                Name: string;
+                                Options: { [option: string]: string };
+                            };
+                            Subpath?: string;
+                        };
+                        volumeOptions.NoCopy = mount.volumeOptions.nocopy;
+                    }
+                    if (mount.volumeOptions.labels) {
+                        volumeOptions ||= {} as {
+                            NoCopy: boolean;
+                            Labels: { [label: string]: string };
+                            DriverConfig: {
+                                Name: string;
+                                Options: { [option: string]: string };
+                            };
+                            Subpath?: string;
+                        };
+                        volumeOptions.Labels = mount.volumeOptions.labels;
+                    }
+                }
+                let bindOptions:
+                    | {
+                    Propagation: MountPropagation;
+                }
+                    | undefined;
+                if (mount.bindOptions) {
+                    if (mount.bindOptions.propagation) {
+                        bindOptions ||= {} as {
+                            Propagation: MountPropagation;
+                        };
+                        bindOptions.Propagation = mount.bindOptions.propagation;
+                    }
+                }
+
+                let tmpfsOptions:
+                    | {
+                    SizeBytes: number;
+                    Mode: number;
+                }
+                    | undefined;
+                if (mount.tmpfsOptions) {
+                    if (mount.tmpfsOptions.size !== undefined) {
+                        tmpfsOptions ||= {} as {
+                            SizeBytes: number;
+                            Mode: number;
+                        };
+                        tmpfsOptions.SizeBytes = mount.tmpfsOptions.size;
+                    }
+                    if (mount.tmpfsOptions.mode !== undefined) {
+                        tmpfsOptions ||= {} as {
+                            SizeBytes: number;
+                            Mode: number;
+                        };
+                        tmpfsOptions.Mode = mount.tmpfsOptions.mode;
+                    }
+                }
+
+                const m: MountSettings = {
+                    Target: mount.target,
+                    Source: mount.source || '',
+                    Type: mount.type as MountType,
+                    ReadOnly: mount.readOnly,
+                    Consistency: mount.consistency,
+                    VolumeOptions: volumeOptions,
+                    BindOptions: bindOptions,
+                    TmpfsOptions: tmpfsOptions,
+                };
+                mounts ||= [];
+                mounts.push(m);
+            }
+        }
+
+        return {
+            name: config.name,
+            Image: config.image,
+            Cmd: Array.isArray(config.command)
+                ? config.command
+                : typeof config.command === 'string'
+                    ? [config.command]
+                    : undefined,
+            Entrypoint: config.entrypoint,
+            Env: config.environment
+                ? Object.keys(config.environment).map(key => `${key}=${config.environment![key]}`)
+                : undefined,
+            // WorkingDir: config.workingDir,
+            // { '/data': {} }
+            Volumes: config.volumes?.reduce((acc, vol) => (acc[vol] = {}), {} as { [key: string]: object }),
+            Labels: config.labels,
+            ExposedPorts: config.ports
+                ? config.ports.reduce(
+                    (acc, port) => {
+                        acc[`${port.containerPort}/${port.protocol || 'tcp'}`] = {};
+                        return acc;
+                    },
+                    {} as { [key: string]: object },
+                )
+                : undefined,
+            HostConfig: {
+                // Binds: config.binds,
+                PortBindings: config.ports
+                    ? config.ports.reduce(
+                        (acc, port) => {
+                            acc[`${port.containerPort}/${port.protocol || 'tcp'}`] = [
+                                {
+                                    HostPort: port.hostPort ? port.hostPort.toString() : undefined,
+                                    HostIp: port.hostIP || undefined,
+                                },
+                            ];
+                            return acc;
+                        },
+                        {} as { [key: string]: Array<{ HostPort?: string; HostIp?: string }> },
+                    )
+                    : undefined,
+                Mounts: mounts,
+                NetworkMode: config.networkMode,
+                // Links: config.links,
+                // Dns: config.dns,
+                // DnsOptions: config.dnsOptions,
+                // DnsSearch: config.dnsSearch,
+                ExtraHosts: config.extraHosts,
+                // VolumesFrom: config.volumesFrom,
+                Privileged: config.security?.privileged,
+                CapAdd: config.security?.capAdd,
+                CapDrop: config.security?.capDrop,
+                UsernsMode: config.security?.usernsMode,
+                IpcMode: config.security?.ipc,
+                PidMode: config.security?.pid,
+                GroupAdd: config.security?.groupAdd?.map(g => g.toString()),
+                ReadonlyRootfs: config.readOnly,
+                RestartPolicy: {
+                    Name: config.restart?.policy || 'no',
+                    MaximumRetryCount: config.restart?.maxRetries || 0,
+                },
+                CpuShares: config.resources?.cpuShares,
+                CpuPeriod: config.resources?.cpuPeriod,
+                CpuQuota: config.resources?.cpuQuota,
+                CpusetCpus: config.resources?.cpus?.toString(),
+                Memory: config.resources?.memory,
+                MemorySwap: config.resources?.memorySwap,
+                MemoryReservation: config.resources?.memoryReservation,
+                // OomKillDisable: config.resources?.oomKillDisable,
+                // OomScoreAdj: config.resources?.oomScoreAdj,
+                LogConfig: config.logging
+                    ? {
+                        Type: config.logging.driver || 'json-file',
+                        Config: config.logging.options || {},
+                    }
+                    : undefined,
+                SecurityOpt: [
+                    ...(config.security?.seccomp ? [`seccomp=${config.security.seccomp}`] : []),
+                    ...(config.security?.apparmor ? [config.security.apparmor] : []),
+                    ...(config.security?.noNewPrivileges ? ['no-new-privileges'] : []),
+                ],
+                Sysctls: config.sysctls,
+                Init: config.init,
+            },
+            StopSignal: config.stop?.signal,
+            StopTimeout: config.stop?.gracePeriodSec,
+            Tty: config.tty,
+            OpenStdin: config.openStdin,
+        };
+    }
+
     /**
      * Create and start a container with the given configuration. No checks are done.
      */
     async containerRun(config: ContainerConfig): Promise<{ stdout: string; stderr: string }> {
+        if (this.#dockerode) {
+            const container = await this.#dockerode.createContainer(DockerManager.getDockerodeConfig(config));
+            await container.start();
+            return { stdout: `Container ${config.name} started`, stderr: '' };
+        }
+
         try {
-            return await this.#exec(`run ${this.#toDockerRun(config)}`);
+            return await this.#exec(`run ${DockerManager.toDockerRun(config)}`);
         } catch (e) {
             return { stdout: '', stderr: e.message.toString() };
         }
@@ -850,8 +1279,12 @@ export default class DockerManager {
      * Create a container with the given configuration without starting it. No checks are done.
      */
     async containerCreate(config: ContainerConfig): Promise<{ stdout: string; stderr: string }> {
+        if (this.#dockerode) {
+            const container = await this.#dockerode.createContainer(DockerManager.getDockerodeConfig(config));
+            return { stdout: `Container ${container.id} created`, stderr: '' };
+        }
         try {
-            return await this.#exec(`create ${this.#toDockerRun(config, true)}`);
+            return await this.#exec(`create ${DockerManager.toDockerRun(config, true)}`);
         } catch (e) {
             return { stdout: '', stderr: e.message.toString() };
         }
@@ -862,11 +1295,40 @@ export default class DockerManager {
      *
      * This function checks if a container is running, stops it if necessary,
      * removes it and creates a new one with the given configuration.
+     * The container is not started after creation.
      *
      * @param config new configuration
      * @returns stdout and stderr of the create command
      */
     async containerReCreate(config: ContainerConfig): Promise<{ stdout: string; stderr: string }> {
+        if (this.#dockerode) {
+            // Get if the container is running
+            let containers = await this.containerList();
+            // find ID of container
+            const containerInfo = containers.find(it => it.names === config.name);
+            if (containerInfo) {
+                const container = this.#dockerode.getContainer(containerInfo.id);
+                if (containerInfo.status === 'running' || containerInfo.status === 'restarting') {
+                    await container.stop();
+                    containers = await this.containerList();
+
+                    if (containers.find(it => it.id === containerInfo.id && it.status === 'running')) {
+                        this.adapter.log.warn(`Cannot remove container: still running`);
+                        throw new Error(`Container ${containerInfo.id} still running after stop`);
+                    }
+                }
+                // Remove container
+                await container.remove();
+
+                containers = await this.containerList();
+                if (containers.find(it => it.id === containerInfo.id)) {
+                    this.adapter.log.warn(`Cannot remove container: still existing`);
+                    throw new Error(`Container ${containerInfo.id} still found after remove`);
+                }
+            }
+            const newContainer = await this.#dockerode.createContainer(DockerManager.getDockerodeConfig(config));
+            return { stdout: `Container ${newContainer.id} created`, stderr: '' };
+        }
         try {
             // Get if the container is running
             let containers = await this.containerList();
@@ -888,10 +1350,10 @@ export default class DockerManager {
                 containers = await this.containerList();
                 if (containers.find(it => it.id === containerInfo.id)) {
                     this.adapter.log.warn(`Cannot remove container: ${rmResult.stderr || rmResult.stdout}`);
-                    throw new Error(`Container ${containerInfo.id} still found after stop`);
+                    throw new Error(`Container ${containerInfo.id} still found after remove`);
                 }
             }
-            return await this.#exec(`create ${this.#toDockerRun(config, true)}`);
+            return await this.#exec(`create ${DockerManager.toDockerRun(config, true)}`);
         } catch (e) {
             return { stdout: '', stderr: e.message.toString() };
         }
@@ -899,6 +1361,20 @@ export default class DockerManager {
 
     /** List all images */
     async imageList(): Promise<ImageInfo[]> {
+        if (this.#dockerode) {
+            const images = await this.#dockerode.listImages();
+            return images.map(img => {
+                const repoTag = img.RepoTags && img.RepoTags.length ? img.RepoTags[0] : '<none>:<none>';
+                const [repository, tag] = repoTag.split(':');
+                return {
+                    repository,
+                    tag,
+                    id: img.Id.startsWith('sha256:') ? img.Id.substring(7, 19) : img.Id.substring(0, 12),
+                    createdSince: new Date(img.Created * 1000).toISOString(),
+                    size: img.Size,
+                };
+            });
+        }
         try {
             const { stdout } = await this.#exec(
                 'images --format "{{.Repository}}:{{.Tag}};{{.ID}};{{.CreatedAt}};{{.Size}}"',
@@ -925,6 +1401,38 @@ export default class DockerManager {
 
     /** Build an image from a Dockerfile */
     async imageBuild(dockerfilePath: string, tag: string): Promise<{ stdout: string; stderr: string }> {
+        if (this.#dockerode) {
+            try {
+                const stream = await this.#dockerode.buildImage(dockerfilePath, {
+                    t: tag,
+                    dockerfile: dockerfilePath,
+                });
+
+                return new Promise<{ stdout: string; stderr: string }>((resolve, reject) => {
+                    let stdout = '';
+                    let stderr = '';
+
+                    const onFinished = (err: Error | null): void => {
+                        if (err) {
+                            return reject(err);
+                        }
+                        resolve({ stdout, stderr });
+                    };
+                    const onProgress = (event: any): void => {
+                        if (event.stream) {
+                            stdout += event.stream;
+                        }
+                        if (event.error) {
+                            stderr += event.error;
+                        }
+                        this.adapter.log.debug(JSON.stringify(event));
+                    };
+                    this.#dockerode!.modem.followProgress(stream, onFinished, onProgress);
+                });
+            } catch (e) {
+                return { stdout: '', stderr: e.message.toString() };
+            }
+        }
         try {
             return await this.#exec(`build -t ${tag} -f ${dockerfilePath} .`);
         } catch (e) {
@@ -955,14 +1463,65 @@ export default class DockerManager {
         }
     }
 
+    static rodeInspect2DockerImageInspect(data: Docker.ImageInspectInfo): DockerImageInspect {
+        return {
+            Id: data.Id.startsWith('sha256:') ? data.Id.substring(7, 19) : data.Id.substring(0, 12),
+            RepoTags: data.RepoTags,
+            RepoDigests: data.RepoDigests,
+            Parent: data.Parent,
+            Comment: data.Comment,
+            Created: data.Created,
+            DockerVersion: data.DockerVersion,
+            Author: data.Author,
+            Architecture: data.Architecture,
+            Os: data.Os,
+            Size: data.Size,
+            GraphDriver: {
+                Data: data.GraphDriver.Data as any,
+                Name: data.GraphDriver.Name,
+            },
+            RootFS: data.RootFS,
+            Config: {
+                ...data.Config,
+                Entrypoint: Array.isArray(data.Config.Entrypoint)
+                    ? data.Config.Entrypoint
+                    : typeof data.Config.Entrypoint === 'string'
+                        ? [data.Config.Entrypoint]
+                        : [],
+            },
+        };
+    }
+
     /** Inspect an image */
     async imageInspect(imageId: ImageName): Promise<DockerImageInspect | null> {
+        if (this.#dockerode) {
+            const image = this.#dockerode.getImage(imageId);
+            const data = await image.inspect();
+            return DockerManager.rodeInspect2DockerImageInspect(data);
+        }
+
         try {
             const { stdout } = await this.#exec(`inspect ${imageId}`);
             return JSON.parse(stdout)[0];
         } catch (e) {
             this.adapter.log.debug(`Cannot inspect image: ${e.message.toString()}`);
             return null;
+        }
+    }
+
+    async imagePrune(): Promise<{ stdout: string; stderr: string }> {
+        if (this.#dockerode) {
+            try {
+                await this.#dockerode.pruneImages();
+                return { stdout: 'Unused images pruned', stderr: '' };
+            } catch (e) {
+                return { stdout: '', stderr: e.message.toString() };
+            }
+        }
+        try {
+            return await this.#exec(`image prune -f`);
+        } catch (e) {
+            return { stdout: '', stderr: e.message.toString() };
         }
     }
 
@@ -991,6 +1550,22 @@ export default class DockerManager {
     async containerStop(
         container: ContainerName,
     ): Promise<{ stdout: string; stderr: string; containers?: ContainerInfo[] }> {
+        if (this.#dockerode) {
+            let containers = await this.containerList();
+            // find ID of container
+            const containerInfo = containers.find(it => it.names === container || it.id === container);
+            if (!containerInfo) {
+                throw new Error(`Container ${container} not found`);
+            }
+            const dockerContainer = this.#dockerode.getContainer(containerInfo.id);
+            await dockerContainer.stop();
+            containers = await this.containerList();
+            if (containers.find(it => it.id === containerInfo.id && it.status === 'running')) {
+                throw new Error(`Container ${container} still running after stop`);
+            }
+            return { stdout: `Contained ${containerInfo.id} stopped`, stderr: '', containers };
+        }
+
         try {
             let containers = await this.containerList();
             // find ID of container
@@ -1018,6 +1593,25 @@ export default class DockerManager {
     async containerStart(
         container: ContainerName,
     ): Promise<{ stdout: string; stderr: string; containers?: ContainerInfo[] }> {
+        if (this.#dockerode) {
+            let containers = await this.containerList();
+            // find ID of container
+            const containerInfo = containers.find(it => it.names === container || it.id === container);
+            if (!containerInfo) {
+                throw new Error(`Container ${container} not found`);
+            }
+            const dockerContainer = this.#dockerode.getContainer(containerInfo.id);
+            await dockerContainer.start();
+            containers = await this.containerList();
+            if (
+                containers.find(
+                    it => it.id === containerInfo.id && it.status !== 'running' && it.status !== 'restarting',
+                )
+            ) {
+                throw new Error(`Container ${container} still running after stop`);
+            }
+            return { stdout: `Container ${containerInfo.id} started`, stderr: '', containers };
+        }
         try {
             let containers = await this.containerList();
             // find ID of container
@@ -1054,6 +1648,17 @@ export default class DockerManager {
         container: ContainerName,
         timeoutSeconds?: number,
     ): Promise<{ stdout: string; stderr: string }> {
+        if (this.#dockerode) {
+            const containers = await this.containerList();
+            // find ID of container
+            const containerInfo = containers.find(it => it.names === container || it.id === container);
+            if (!containerInfo) {
+                throw new Error(`Container ${container} not found`);
+            }
+            const dockerContainer = this.#dockerode.getContainer(containerInfo.id);
+            await dockerContainer.restart({ t: timeoutSeconds || 5 });
+            return { stdout: `Container ${containerInfo.id} restarted`, stderr: '' };
+        }
         try {
             const containers = await this.containerList();
             // find ID of container
@@ -1110,6 +1715,58 @@ export default class DockerManager {
      * @param all If true, list all containers. If false, list only running containers. Default is true.
      */
     async containerList(all: boolean = true): Promise<ContainerInfo[]> {
+        if (this.#dockerode) {
+            const containers = await this.#dockerode.listContainers({ all });
+            return containers.map(cont => {
+                const statusKey: string = cont.State.toLowerCase();
+                let status: ContainerInfo['status'];
+                if (statusKey === 'up') {
+                    status = 'running';
+                } else if (statusKey === 'exited') {
+                    status = 'exited';
+                } else if (statusKey === 'created') {
+                    status = 'created';
+                } else if (statusKey === 'paused') {
+                    status = 'paused';
+                } else if (statusKey === 'restarting') {
+                    status = 'restarting';
+                } else {
+                    status = statusKey as ContainerInfo['status'];
+                }
+
+                // Try to convert: Up 6 minutes, Up 6 hours, Up 6 days to minutes
+                const uptimeMatch = cont.Status.match(/Up (\d+) (seconds?|minutes?|hours?|days?)/);
+                let minutes = 0;
+                if (uptimeMatch) {
+                    const value = parseInt(uptimeMatch[1], 10);
+                    const unit = uptimeMatch[2];
+                    if (unit.startsWith('hour')) {
+                        minutes = value * 60;
+                    } else if (unit.startsWith('day')) {
+                        minutes = value * 60 * 24;
+                    } else if (unit.startsWith('second')) {
+                        minutes = Math.ceil(value / 60);
+                    }
+                } else if (cont.Status === 'Up About a minute') {
+                    minutes = 1;
+                }
+                return {
+                    id: cont.Id.substring(0, 12),
+                    image: cont.Image,
+                    command: cont.Command,
+                    createdAt: new Date(cont.Created * 1000).toISOString(),
+                    status,
+                    uptime: minutes.toString(),
+                    ports: cont.Ports.map(
+                        p =>
+                            `${p.IP ? `${p.IP}:` : ''}${p.PublicPort ? `${p.PublicPort}->` : ''}${p.PrivatePort}/${p.Type}`,
+                    ).join(', '),
+                    names: cont.Names.map(n => (n.startsWith('/') ? n.substring(1) : n)).join(', '),
+                    labels: cont.Labels || {},
+                };
+            });
+        }
+
         try {
             const { stdout } = await this.#exec(
                 `ps ${all ? '-a' : ''} --format  "{{.Names}};{{.Status}};{{.ID}};{{.Image}};{{.Command}};{{.CreatedAt}};{{.Ports}};{{.Labels}}"`,
@@ -1164,6 +1821,27 @@ export default class DockerManager {
         containerNameOrId: ContainerName,
         options: { tail?: number; follow?: boolean } = {},
     ): Promise<string[]> {
+        if (this.#dockerode) {
+            try {
+                const container = this.#dockerode.getContainer(containerNameOrId);
+                const data = await container.logs({
+                    stdout: true,
+                    stderr: true,
+                    follow: false,
+                    tail: options.tail || undefined,
+                });
+                return data
+                    .toString()
+                    .split('\n')
+                    .filter(line => line.trim() !== '');
+            } catch (e) {
+                return e
+                    .toString()
+                    .split('\n')
+                    .map((line: string): string => line.trim());
+            }
+        }
+
         try {
             const args = [];
             if (options.tail !== undefined) {
@@ -1183,8 +1861,28 @@ export default class DockerManager {
         }
     }
 
+    static dockerodeInspect2DockerContainerInspect(data: Docker.ContainerInspectInfo): DockerContainerInspect {
+        // todo
+        return data as unknown as DockerContainerInspect;
+    }
+
     /** Inspect a container */
     async containerInspect(containerNameOrId: string): Promise<DockerContainerInspect | null> {
+        if (this.#dockerode) {
+            try {
+                const container = this.#dockerode.getContainer(containerNameOrId);
+                const dResult = await container.inspect();
+
+                const result = DockerManager.dockerodeInspect2DockerContainerInspect(dResult);
+                if (result.State.Running) {
+                    result.Stats = (await this.containerGetRamAndCpuUsage(containerNameOrId)) || undefined;
+                }
+                return result;
+            } catch (e) {
+                this.adapter.log.debug(`Cannot inspect container: ${e.message.toString()}`);
+                return null;
+            }
+        }
         try {
             const { stdout } = await this.#exec(`inspect ${containerNameOrId}`);
             const result = JSON.parse(stdout)[0] as DockerContainerInspect;
@@ -1198,10 +1896,26 @@ export default class DockerManager {
         }
     }
 
+    async containerPrune(): Promise<{ stdout: string; stderr: string }> {
+        if (this.#dockerode) {
+            try {
+                const result = await this.#dockerode.pruneContainers();
+                return { stdout: `Containers pruned: ${result.ContainersDeleted?.join(', ') || 'none'}`, stderr: '' };
+            } catch (e) {
+                return { stdout: '', stderr: e.message.toString() };
+            }
+        }
+        try {
+            return await this.#exec(`container prune -f`);
+        } catch (e) {
+            return { stdout: '', stderr: e.message.toString() };
+        }
+    }
+
     /**
      * Build a docker run command string from ContainerConfig
      */
-    #toDockerRun(config: ContainerConfig, create?: boolean): string {
+    static toDockerRun(config: ContainerConfig, create?: boolean): string {
         const args: string[] = [];
 
         // detach / interactive
@@ -1396,6 +2110,15 @@ export default class DockerManager {
     }
 
     async networkList(): Promise<NetworkInfo[]> {
+        if (this.#dockerode) {
+            const networks = await this.#dockerode.listNetworks();
+            return networks.map(net => ({
+                name: net.Name,
+                id: net.Id,
+                driver: net.Driver as NetworkDriver,
+                scope: net.Scope,
+            }));
+        }
         // docker network ls
         try {
             const { stdout } = await this.#exec(`network ls --format "{{.Name}};{{.ID}};{{.Driver}};{{.Scope}}"`);
@@ -1416,6 +2139,15 @@ export default class DockerManager {
         name: string,
         driver?: NetworkDriver,
     ): Promise<{ stdout: string; stderr: string; networks?: NetworkInfo[] }> {
+        if (this.#dockerode) {
+            const net = await this.#dockerode.createNetwork({ Name: name, Driver: driver || 'bridge' });
+            const networks = await this.networkList();
+            if (!networks.find(it => it.name === name)) {
+                throw new Error(`Network ${name} not found after creation`);
+            }
+            return { stdout: `Network ${net.id} created`, stderr: '', networks };
+        }
+
         const result = await this.#exec(`network create ${driver ? `--driver ${driver}` : ''} ${name}`);
         const networks = await this.networkList();
         if (!networks.find(it => it.name === name)) {
@@ -1433,8 +2165,27 @@ export default class DockerManager {
         return { ...result, networks };
     }
 
+    async networkPrune(): Promise<{ stdout: string; stderr: string; networks?: NetworkInfo[] }> {
+        if (this.#dockerode) {
+            const result = await this.#dockerode.pruneNetworks();
+            const networks = await this.networkList();
+            return { stdout: `Networks pruned`, stderr: JSON.stringify(result), networks };
+        }
+        const result = await this.#exec(`network prune -f`);
+        const networks = await this.networkList();
+        return { ...result, networks };
+    }
+
     /** List all volumes */
     async volumeList(): Promise<VolumeInfo[]> {
+        if (this.#dockerode) {
+            const volumesData = await this.#dockerode.listVolumes();
+            return (volumesData.Volumes || []).map(vol => ({
+                name: vol.Name,
+                driver: vol.Driver as VolumeDriver,
+                volume: vol.Mountpoint,
+            }));
+        }
         // docker network ls
         try {
             const { stdout } = await this.#exec(`volume ls --format "{{.Name}};{{.Driver}};{{.Mountpoint}}"`);
@@ -1451,6 +2202,65 @@ export default class DockerManager {
         }
     }
 
+    async volumeCopyTo(volumeName: string, sourcePath: string): Promise<{ stdout: string; stderr: string }> {
+        const tempContainerName = `iobroker_temp_copy_${Date.now()}`;
+        if (this.#dockerode) {
+            // Check if alpine image is there
+            const images = await this.imageList();
+            if (!images.find(img => img.repository === 'alpine')) {
+                const pullResult = await this.imagePull('alpine');
+                if (pullResult.stderr) {
+                    return { stdout: '', stderr: `Cannot pull alpine image: ${pullResult.stderr}` };
+                }
+            }
+
+            // create a temporary container with volume mounted
+            const container = await this.#dockerode.createContainer({
+                Image: 'alpine',
+                name: tempContainerName,
+                Cmd: ['sleep', '30'],
+                HostConfig: {
+                    Binds: [`${volumeName}:/data`],
+                },
+            });
+            try {
+                await container.start();
+                // use dockerode to copy files
+                const pack = tar.pack(sourcePath);
+                await container.putArchive(pack, { path: '/data' });
+                return { stdout: 'Data copied to volume', stderr: '' };
+            } catch (e) {
+                return { stdout: '', stderr: `Cannot copy data to volume: ${e.message}` };
+            } finally {
+                // remove temporary container
+                try {
+                    await container.stop();
+                    await container.remove({ force: true });
+                } catch (e) {
+                    this.adapter.log.warn(`Cannot remove temporary container ${tempContainerName}: ${e.message}`);
+                }
+            }
+        }
+
+        // create a temporary container with volume mounted
+        const createResult = await this.#exec(
+            `create -v ${volumeName}:/data --name ${tempContainerName} alpine sleep 60`,
+        );
+        if (createResult.stderr) {
+            return { stdout: '', stderr: `Cannot create temporary container: ${createResult.stderr}` };
+        }
+        try {
+            const copyResult = await this.#exec(`cp ${sourcePath} ${tempContainerName}:/data/`);
+            if (copyResult.stderr) {
+                return { stdout: '', stderr: `Cannot copy data to volume: ${copyResult.stderr}` };
+            }
+            return { stdout: 'Data copied to volume', stderr: '' };
+        } finally {
+            // remove temporary container
+            await this.#exec(`rm -f ${tempContainerName}`);
+        }
+    }
+
     /**
      * Create a volume
      *
@@ -1463,6 +2273,18 @@ export default class DockerManager {
         driver?: VolumeDriver,
         volume?: string,
     ): Promise<{ stdout: string; stderr: string; volumes?: VolumeInfo[] }> {
+        if (this.#dockerode) {
+            const vol = await this.#dockerode.createVolume({
+                Name: name,
+                Driver: driver || 'local',
+                DriverOpts: volume ? { device: volume, o: 'bind', type: 'none' } : {},
+            });
+            const volumes = await this.volumeList();
+            if (!volumes.find(it => it.name === name)) {
+                throw new Error(`Network ${name} not found after creation`);
+            }
+            return { stdout: `Volume ${vol.Name} created`, stderr: '', volumes };
+        }
         let result: { stdout: string; stderr: string };
         if (driver === 'local' || !driver) {
             if (volume) {
@@ -1490,6 +2312,18 @@ export default class DockerManager {
         if (volumes.find(it => it.name === volumeName)) {
             throw new Error(`Volume ${volumeName} still found after deletion`);
         }
+        return { ...result, volumes };
+    }
+
+    /** Prune unused volumes */
+    async volumePrune(): Promise<{ stdout: string; stderr: string; volumes?: VolumeInfo[] }> {
+        if (this.#dockerode) {
+            const result = await this.#dockerode.pruneVolumes();
+            const volumes = await this.volumeList();
+            return { stdout: `Volumes pruned`, stderr: JSON.stringify(result), volumes };
+        }
+        const result = await this.#exec(`volume prune -f`);
+        const volumes = await this.volumeList();
         return { ...result, volumes };
     }
 

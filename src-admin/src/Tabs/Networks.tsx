@@ -33,11 +33,13 @@ interface NetworksTabProps {
     alive: boolean;
     instance: number;
     networks: NetworkInfo[] | undefined;
+    removeSupported: boolean;
 }
 
 interface NetworksTabState {
     showAddDialog: boolean;
     showDeleteDialog: string;
+    showPruneDialog: boolean;
     addNetworkName: string;
     addNetworkDriver: NetworkDriver | '';
     requesting: boolean;
@@ -56,6 +58,7 @@ export default class NetworksTab extends Component<NetworksTabProps, NetworksTab
             requesting: false,
             showHint: '',
             showError: '',
+            showPruneDialog: false,
         };
     }
 
@@ -284,6 +287,69 @@ export default class NetworksTab extends Component<NetworksTabProps, NetworksTab
         );
     }
 
+    renderConfirmPruneDialog(): React.JSX.Element | null {
+        if (!this.state.showPruneDialog) {
+            return null;
+        }
+
+        return (
+            <Dialog
+                open={!0}
+                onClose={() => this.setState({ showPruneDialog: false })}
+            >
+                <DialogTitle>{I18n.t('Prune unused networks')}</DialogTitle>
+                <DialogContent>
+                    {I18n.t('Are you sure you want to delete unused networks?', this.state.showPruneDialog)}
+                </DialogContent>
+                <DialogActions>
+                    <Button
+                        variant="contained"
+                        color="primary"
+                        disabled={this.state.requesting}
+                        onClick={() => {
+                            this.setState({ requesting: true }, async () => {
+                                try {
+                                    const result: { result: { stdout: string; stderr: string } } =
+                                        await this.props.socket.sendTo(
+                                            `docker-manager.${this.props.instance}`,
+                                            'network:prune',
+                                            {
+                                                id: this.state.showDeleteDialog,
+                                            },
+                                        );
+                                    this.setState({
+                                        showPruneDialog: false,
+                                        requesting: false,
+                                        showHint: result?.result.stdout || '',
+                                        showError: result?.result.stderr || '',
+                                    });
+                                } catch (e) {
+                                    console.error(`Cannot prune networks: ${e}`);
+                                    alert(`Cannot prune networks: ${e}`);
+                                    this.setState({
+                                        requesting: false,
+                                        showError: `Cannot prune networks: ${e}`,
+                                    });
+                                }
+                            });
+                        }}
+                        startIcon={this.state.requesting ? <CircularProgress size={24} /> : <DeleteIcon />}
+                    >
+                        {I18n.t('Delete')}
+                    </Button>
+                    <Button
+                        variant="contained"
+                        color="grey"
+                        onClick={() => this.setState({ showPruneDialog: false })}
+                        startIcon={<CloseIcon />}
+                    >
+                        {I18n.t('Cancel')}
+                    </Button>
+                </DialogActions>
+            </Dialog>
+        );
+    }
+
     render(): React.JSX.Element {
         return (
             <Paper style={{ width: 'calc(100% - 8px)', height: 'calc(100% - 8px)', padding: 4 }}>
@@ -291,6 +357,7 @@ export default class NetworksTab extends Component<NetworksTabProps, NetworksTab
                 {this.renderConfirmDialog()}
                 {this.renderErrorDialog()}
                 {this.renderSnackbar()}
+                {this.renderConfirmPruneDialog()}
                 <InfoBox
                     type="info"
                     closeable
@@ -328,22 +395,30 @@ export default class NetworksTab extends Component<NetworksTabProps, NetworksTab
                                         <AddIcon />
                                     </Fab>
                                 </Tooltip>
-                                {I18n.t('ID')}
+                                {I18n.t('Name')}
                             </TableCell>
-                            <TableCell style={{ fontWeight: 'bold' }}>{I18n.t('Name')}</TableCell>
+                            <TableCell style={{ fontWeight: 'bold' }}>{I18n.t('ID')}</TableCell>
                             <TableCell style={{ fontWeight: 'bold' }}>{I18n.t('Driver')}</TableCell>
                             <TableCell style={{ fontWeight: 'bold' }}>{I18n.t('Scope')}</TableCell>
-                            <TableCell />
+                            <TableCell style={{ textAlign: 'right' }}>
+                                <IconButton
+                                    title={I18n.t('Prune unused containers')}
+                                    disabled={!this.props.alive || this.state.requesting}
+                                    onClick={() => this.setState({ showPruneDialog: true })}
+                                >
+                                    <DeleteIcon />
+                                </IconButton>
+                            </TableCell>
                         </TableRow>
                     </TableHead>
                     <TableBody>
                         {this.props.networks?.map(network => (
                             <TableRow key={network.id}>
-                                <TableCell>{network.id}</TableCell>
                                 <TableCell style={{ fontWeight: 'bold' }}>{network.name}</TableCell>
+                                <TableCell style={{ fontSize: 'smaller' }}>{network.id}</TableCell>
                                 <TableCell>{network.driver || '--'}</TableCell>
                                 <TableCell>{network.scope}</TableCell>
-                                <TableCell>
+                                <TableCell style={{ textAlign: 'right' }}>
                                     <IconButton
                                         size="small"
                                         title={I18n.t('Delete network')}

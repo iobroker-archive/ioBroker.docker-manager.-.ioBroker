@@ -1,6 +1,7 @@
 import React, { Component } from 'react';
 import { type AdminConnection, I18n, InfoBox, type IobTheme, type ThemeType } from '@iobroker/adapter-react-v5';
 import {
+    Box,
     Button,
     CircularProgress,
     Dialog,
@@ -9,18 +10,18 @@ import {
     DialogTitle,
     Fab,
     IconButton,
+    LinearProgress,
+    Menu,
+    MenuItem,
     Paper,
+    Snackbar,
     Table,
     TableBody,
     TableCell,
     TableHead,
     TableRow,
-    Tooltip,
-    Snackbar,
     TextField,
-    LinearProgress,
-    MenuItem,
-    Menu,
+    Tooltip,
 } from '@mui/material';
 import {
     Add as AddIcon,
@@ -41,6 +42,7 @@ import type {
     ImageInfo,
     ContainerConfig,
     NetworkInfo,
+    ImageName,
 } from '../dockerManager.types';
 import CreateContainerDialog from '../Components/CreateContainer';
 import { mapInspectToConfig } from '../Components/utils';
@@ -60,12 +62,14 @@ interface ContainersTabProps {
         command: string,
         cb: ((data: { stderr: string; stdout: string; code?: number | null }) => void) | null,
     ) => void;
+    removeSupported: boolean;
 }
 
 interface ContainersTabState {
     showAddDialog: boolean;
     logs: string[] | null;
-    showDeleteDialog: string; // image name
+    showDeleteDialog: ImageName; // image name
+    showPruneDialog: boolean;
     addImage: ContainerConfig | null;
     requesting: boolean;
     showRecreateDialog: string;
@@ -78,6 +82,9 @@ interface ContainersTabState {
     execCommand: string;
     execResults: { stderr: string; stdout: string };
     showLinks: { anchorEl: HTMLElement | null; container: ContainerInfo } | null;
+    instances: {
+        [instance: string]: { alive: boolean; native: { [key: string]: any } | null; common?: ioBroker.InstanceCommon };
+    };
 }
 
 export default class ContainersTab extends Component<ContainersTabProps, ContainersTabState> {
@@ -101,6 +108,8 @@ export default class ContainersTab extends Component<ContainersTabProps, Contain
             execCommand: window.localStorage.getItem('exec') || '',
             execResults: { stderr: '', stdout: '' },
             showLinks: null,
+            instances: {},
+            showPruneDialog: false,
         };
     }
 
@@ -252,6 +261,69 @@ export default class ContainersTab extends Component<ContainersTabProps, Contain
         );
     }
 
+    renderConfirmPruneDialog(): React.JSX.Element | null {
+        if (!this.state.showPruneDialog) {
+            return null;
+        }
+
+        return (
+            <Dialog
+                open={!0}
+                onClose={() => this.setState({ showPruneDialog: false })}
+            >
+                <DialogTitle>{I18n.t('Prune unused containers')}</DialogTitle>
+                <DialogContent>
+                    {I18n.t('Are you sure you want to delete unused containers?', this.state.showPruneDialog)}
+                </DialogContent>
+                <DialogActions>
+                    <Button
+                        variant="contained"
+                        color="primary"
+                        disabled={this.state.requesting}
+                        onClick={() => {
+                            this.setState({ requesting: true }, async () => {
+                                try {
+                                    const result: { result: { stdout: string; stderr: string } } =
+                                        await this.props.socket.sendTo(
+                                            `docker-manager.${this.props.instance}`,
+                                            'container:prune',
+                                            {
+                                                id: this.state.showDeleteDialog,
+                                            },
+                                        );
+                                    this.setState({
+                                        showPruneDialog: false,
+                                        requesting: false,
+                                        showHint: result?.result.stdout || '',
+                                        showError: result?.result.stderr || '',
+                                    });
+                                } catch (e) {
+                                    console.error(`Cannot prune containers: ${e}`);
+                                    alert(`Cannot prune containers: ${e}`);
+                                    this.setState({
+                                        requesting: false,
+                                        showError: `Cannot prune containers: ${e}`,
+                                    });
+                                }
+                            });
+                        }}
+                        startIcon={this.state.requesting ? <CircularProgress size={24} /> : <DeleteIcon />}
+                    >
+                        {I18n.t('Delete')}
+                    </Button>
+                    <Button
+                        variant="contained"
+                        color="grey"
+                        onClick={() => this.setState({ showPruneDialog: false })}
+                        startIcon={<CloseIcon />}
+                    >
+                        {I18n.t('Cancel')}
+                    </Button>
+                </DialogActions>
+            </Dialog>
+        );
+    }
+
     renderConfirmStopDialog(): React.JSX.Element | null {
         if (!this.state.showStopDialog) {
             return null;
@@ -351,6 +423,111 @@ export default class ContainersTab extends Component<ContainersTabProps, Contain
                 </DialogActions>
             </Dialog>
         );
+    }
+
+    onAliveChanged = (id: string, state: ioBroker.State | null | undefined): void => {
+        const instance = id.replace('system.adapter.', '').replace('.alive', '');
+        const newInstances = { ...this.state.instances };
+        if (newInstances[instance]) {
+            if (newInstances[instance].alive !== !!state?.val) {
+                newInstances[instance].alive = !!state?.val;
+                this.setState({ instances: newInstances });
+            }
+        }
+    };
+
+    onInstanceChanged = async (id: string, obj: ioBroker.Object | null | undefined): Promise<void> => {
+        const instance = id.replace('system.adapter.', '');
+        if (this.state.instances[instance]) {
+            if (obj) {
+                // changed
+                if (
+                    JSON.stringify(obj.common) !== JSON.stringify(this.state.instances[instance].common) ||
+                    JSON.stringify(obj.native) !== JSON.stringify(this.state.instances[instance].native)
+                ) {
+                    const newInstances = { ...this.state.instances };
+                    newInstances[instance].native = obj.native;
+                    newInstances[instance].common = obj.common as ioBroker.InstanceCommon;
+                    this.setState({ instances: newInstances });
+                }
+            } else if (this.state.instances[instance].native !== null) {
+                // deleted
+                const newInstances = { ...this.state.instances };
+                newInstances[instance].native = null;
+                newInstances[instance].common = undefined;
+                this.setState({ instances: newInstances });
+                this.props.socket.unsubscribeState(`system.adapter.${instance}.alive`, this.onAliveChanged);
+                await this.props.socket.unsubscribeObject(`system.adapter.${instance}`, this.onInstanceChanged);
+            }
+        } else if (obj) {
+            // new instance created
+            const newInstances = { ...this.state.instances };
+            newInstances[instance].native = obj.native;
+            newInstances[instance].common = obj.common as ioBroker.InstanceCommon;
+            this.setState({ instances: newInstances });
+            await this.props.socket.subscribeState(`system.adapter.${instance}.alive`, this.onAliveChanged);
+            await this.props.socket.subscribeObject(`system.adapter.${instance}`, this.onInstanceChanged);
+        }
+    };
+
+    async componentWillUnmount(): Promise<void> {
+        // unsubscribe all
+        for (const instance in this.state.instances) {
+            if (
+                Object.prototype.hasOwnProperty.call(this.state.instances, instance) &&
+                this.state.instances[instance].common
+            ) {
+                this.props.socket.unsubscribeState(`system.adapter.${instance}.alive`, this.onAliveChanged);
+                await this.props.socket.unsubscribeObject(`system.adapter.${instance}`, this.onInstanceChanged);
+            }
+        }
+    }
+
+    async componentDidUpdate(): Promise<void> {
+        // collect instances
+        const instances: `${string}.${number}`[] = [];
+        this.props.containers?.forEach(c => {
+            if (c.labels?.iobroker && !instances.includes(c.labels.iobroker as `${string}.${number}`)) {
+                instances.push(c.labels.iobroker as `${string}.${number}`);
+            }
+        });
+        instances.sort();
+
+        let changed = false;
+        const newInstances = { ...this.state.instances };
+        for (const instance of instances) {
+            if (!this.state.instances[instance]) {
+                changed = true;
+                // new instance found
+                const obj = await this.props.socket.getObject(`system.adapter.${instance}`);
+                if (!obj) {
+                    newInstances[instance] = { alive: false, native: null };
+                } else {
+                    const alive = await this.props.socket.getState(`system.adapter.${instance}.alive`);
+                    newInstances[instance] = {
+                        alive: !!alive?.val,
+                        native: obj.native,
+                        common: obj.common,
+                    };
+                    await this.props.socket.subscribeState(`system.adapter.${instance}.alive`, this.onAliveChanged);
+                    await this.props.socket.subscribeObject(`system.adapter.${instance}`, this.onInstanceChanged);
+                }
+            }
+        }
+
+        // go through all known instances and check if they still exist
+        for (const instance in this.state.instances) {
+            if (!instances.includes(instance as `${string}.${number}`)) {
+                changed = true;
+                // instance removed
+                this.props.socket.unsubscribeState(`system.adapter.${instance}.alive`, this.onAliveChanged);
+                await this.props.socket.unsubscribeObject(`system.adapter.${instance}`, this.onInstanceChanged);
+                delete newInstances[instance];
+            }
+        }
+        if (changed) {
+            this.setState({ instances: newInstances });
+        }
     }
 
     stopStartContainer(id: string, isStart: boolean, cb?: () => void): void {
@@ -630,11 +807,106 @@ export default class ContainersTab extends Component<ContainersTabProps, Contain
         );
     }
 
+    getInstanceTooltip(container: ContainerInfo): string | null {
+        if (container.labels?.iobroker) {
+            const instance = this.state.instances[container.labels.iobroker as `${string}.${number}`];
+            if (instance) {
+                // not exist and should be removed
+                if (!instance.common) {
+                    return I18n.t(
+                        'Instance %s does not exist anymore and the container should be removed',
+                        container.labels.iobroker,
+                    );
+                }
+                // exist but not enabled
+                if (!instance.common?.enabled) {
+                    if (container.status === 'running') {
+                        return I18n.t(
+                            'Instance %s is disabled, but container is still running',
+                            container.labels.iobroker,
+                        );
+                    }
+                    return I18n.t('Instance %s is not running', container.labels.iobroker);
+                }
+                if (instance.alive) {
+                    if (container.status === 'running') {
+                        return I18n.t('Instance %s is running', container.labels.iobroker);
+                    }
+                    return I18n.t('Instance %s is alive, but container is not running', container.labels.iobroker);
+                }
+                // exist, but not alive
+                return I18n.t('Instance %s is stopped, but container is still running', container.labels.iobroker);
+            }
+            return I18n.t('Instance %s does not exist anymore and should be removed', container.labels.iobroker);
+        }
+        return null;
+    }
+
+    getInstanceColor(container: ContainerInfo): string {
+        if (container.labels?.iobroker) {
+            const instance = this.state.instances[container.labels.iobroker as `${string}.${number}`];
+            if (instance) {
+                // not exist and should be removed
+                if (!instance.common) {
+                    return 'red';
+                }
+                // exist but not enabled
+                if (!instance.common?.enabled) {
+                    if (container.status === 'running') {
+                        return 'orange';
+                    }
+                    return 'grey';
+                }
+                if (instance.alive) {
+                    if (container.status === 'running') {
+                        return 'green';
+                    }
+                    return 'orange';
+                }
+                // exist, but not alive
+                return 'orange';
+            }
+            return 'gray';
+        }
+        return 'inherit';
+    }
+
+    static getStatusColor(
+        status: 'created' | 'restarting' | 'running' | 'removing' | 'paused' | 'exited' | 'dead',
+    ): string {
+        if (status === 'running' || status === 'created') {
+            return 'green';
+        }
+        if (status === 'paused') {
+            return 'blue';
+        }
+        if (status === 'restarting') {
+            return 'orange';
+        }
+        if (status === 'exited' || status === 'dead') {
+            return 'red';
+        }
+        return 'gray';
+    }
+
+    static upTime2String(minutes: number): string {
+        if (minutes < 60) {
+            return I18n.t('%s minutes', minutes);
+        }
+        const hours = Math.round(minutes / 6) / 10;
+        if (hours < 24) {
+            return I18n.t('%s hours', hours);
+        }
+        const days = Math.round(hours / 2.4) / 10;
+        return I18n.t('%s days', days);
+    }
+
     render(): React.JSX.Element {
         return (
             <Paper style={{ width: 'calc(100% - 8px)', height: 'calc(100% - 8px)', padding: 4 }}>
                 {this.renderAddDialog()}
                 {this.renderConfirmDeleteDialog()}
+                {this.renderConfirmPruneDialog()}
                 {this.renderConfirmRestartDialog()}
                 {this.renderConfirmStopDialog()}
                 {this.renderErrorDialog()}
@@ -687,66 +959,91 @@ export default class ContainersTab extends Component<ContainersTabProps, Contain
                                 </Tooltip>
                                 {I18n.t('ID')}
                             </TableCell>
-                            <TableCell>{I18n.t('Name')}</TableCell>
-                            <TableCell>{I18n.t('Image')}</TableCell>
-                            <TableCell>{I18n.t('Command')}</TableCell>
+                            <TableCell>
+                                {I18n.t('Name')} / {I18n.t('Image')}
+                            </TableCell>
                             <TableCell>{I18n.t('Created')}</TableCell>
                             <TableCell>{I18n.t('Status')}</TableCell>
-                            <TableCell>{I18n.t('Uptime')}</TableCell>
                             <TableCell>{I18n.t('Ports')}</TableCell>
-                            <TableCell></TableCell>
+                            <TableCell style={{ textAlign: 'right' }}>
+                                <IconButton
+                                    title={I18n.t('Prune unused containers')}
+                                    disabled={!this.props.alive || this.state.requesting}
+                                    onClick={() => this.setState({ showPruneDialog: true })}
+                                >
+                                    <DeleteIcon />
+                                </IconButton>
+                            </TableCell>
                         </TableRow>
                     </TableHead>
                     <TableBody>
                         {this.props.containers?.map(container => (
                             <TableRow key={container.id}>
-                                <TableCell>
-                                    {container.labels?.iobroker ? (
-                                        <div>
-                                            <div>{container.id || '--'}</div>
-                                            <div style={{ opacity: 0.7, fontSize: 'smaller', fontStyle: 'italic' }}>
-                                                {container.labels?.iobroker}
-                                            </div>
-                                        </div>
-                                    ) : (
-                                        container.id || '--'
-                                    )}
-                                </TableCell>
-                                <TableCell>{container.names || '--'}</TableCell>
                                 <TableCell
-                                    sx={{
-                                        '& a:hover': { textDecoration: 'underline' },
-                                        '& a:visited': {
-                                            color: this.props.themeType === 'dark' ? '#4da6ff' : '#0066ff',
-                                        },
-                                        '& a:active': {
-                                            color: this.props.themeType === 'dark' ? '#4da6ff' : '#0066ff',
-                                        },
-                                    }}
+                                    style={{ display: 'flex', flexDirection: 'column', gap: 4 }}
+                                    title={this.getInstanceTooltip(container) || undefined}
                                 >
-                                    {container.image ? (
-                                        <a
-                                            href={`https://hub.docker.com/r/${container.image.split(':')[0]}`}
-                                            target="_blank"
-                                            rel="noreferrer"
-                                            style={{
-                                                color: this.props.themeType === 'dark' ? '#4da6ff' : '#0066ff',
-                                            }}
-                                        >
-                                            {container.image}
-                                        </a>
-                                    ) : (
-                                        '--'
-                                    )}
+                                    <div>{container.id || '--'}</div>
+                                    <div
+                                        style={{
+                                            opacity: 0.7,
+                                            fontSize: 'smaller',
+                                            fontStyle: 'italic',
+                                            color: this.getInstanceColor(container),
+                                        }}
+                                    >
+                                        {container.labels?.iobroker || ''}
+                                    </div>
                                 </TableCell>
-                                <TableCell>{container.command || '--'}</TableCell>
+                                <TableCell>
+                                    <div>{container.names || '--'}</div>
+                                    <Box
+                                        sx={{
+                                            '& a:hover': { textDecoration: 'underline' },
+                                            '& a:visited': {
+                                                color: this.props.themeType === 'dark' ? '#4da6ff' : '#0066ff',
+                                            },
+                                            '& a:active': {
+                                                color: this.props.themeType === 'dark' ? '#4da6ff' : '#0066ff',
+                                            },
+                                        }}
+                                    >
+                                        {container.image ? (
+                                            <a
+                                                href={`https://hub.docker.com/r/${container.image.split(':')[0]}`}
+                                                target="_blank"
+                                                rel="noreferrer"
+                                                style={{
+                                                    color: this.props.themeType === 'dark' ? '#4da6ff' : '#0066ff',
+                                                }}
+                                            >
+                                                {container.image}
+                                            </a>
+                                        ) : (
+                                            '--'
+                                        )}
+                                    </Box>
+                                </TableCell>
                                 <TableCell>
                                     {container.createdAt
                                         ? new Date(container.createdAt.replace(/ [A-Z]+$/, '')).toLocaleString()
                                         : '--'}
                                 </TableCell>
-                                <TableCell>{container.status || '--'}</TableCell>
-                                <TableCell>{container.uptime || '--'}</TableCell>
+                                <TableCell>
+                                    <div
+                                        style={{
+                                            color: ContainersTab.getStatusColor(container.status),
+                                            fontWeight: 'bold',
+                                        }}
+                                    >
+                                        {container.status ? I18n.t(container.status) : '--'}
+                                    </div>
+                                    <div>
+                                        {parseFloat(container.uptime).toString() === container.uptime
+                                            ? ContainersTab.upTime2String(parseFloat(container.uptime))
+                                            : container.uptime || '--'}
+                                    </div>
+                                </TableCell>
                                 <TableCell
                                     title={
                                         container.httpLinks?.[window.location.hostname]?.length &&
@@ -782,7 +1079,7 @@ export default class ContainersTab extends Component<ContainersTabProps, Contain
                                         <div key={i.toString()}>{it.trim()}</div>
                                     ))}
                                 </TableCell>
-                                <TableCell>
+                                <TableCell style={{ textAlign: 'right' }}>
                                     <IconButton
                                         size="small"
                                         title={I18n.t('Logs')}
@@ -825,7 +1122,7 @@ export default class ContainersTab extends Component<ContainersTabProps, Contain
                                     </IconButton>
                                     <IconButton
                                         size="small"
-                                        title={I18n.t('Information about image')}
+                                        title={I18n.t('Information about container')}
                                         disabled={!this.props.alive}
                                         onClick={async () => {
                                             try {
@@ -901,22 +1198,24 @@ export default class ContainersTab extends Component<ContainersTabProps, Contain
                                     >
                                         <RefreshIcon />
                                     </IconButton>
-                                    <IconButton
-                                        size="small"
-                                        title={I18n.t('Delete image')}
-                                        disabled={
-                                            !this.props.alive ||
-                                            container.status === 'running' ||
-                                            container.status === 'restarting'
-                                        }
-                                        onClick={() =>
-                                            this.setState({
-                                                showDeleteDialog: container.id,
-                                            })
-                                        }
-                                    >
-                                        <DeleteIcon />
-                                    </IconButton>
+                                    {this.props.removeSupported ? (
+                                        <IconButton
+                                            size="small"
+                                            title={I18n.t('Delete container')}
+                                            disabled={
+                                                !this.props.alive ||
+                                                container.status === 'running' ||
+                                                container.status === 'restarting'
+                                            }
+                                            onClick={() =>
+                                                this.setState({
+                                                    showDeleteDialog: container.id,
+                                                })
+                                            }
+                                        >
+                                            <DeleteIcon />
+                                        </IconButton>
+                                    ) : null}
                                 </TableCell>
                             </TableRow>
                         ))}

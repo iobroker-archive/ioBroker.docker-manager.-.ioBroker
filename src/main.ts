@@ -244,6 +244,11 @@ export class DockerManagerAdapter extends Adapter {
                 this.sendTo(obj.from, obj.command, { result }, obj.callback);
                 break;
             }
+            case 'image:prune': {
+                const result = await this.#dockerCommands?.imagePrune();
+                this.sendTo(obj.from, obj.command, { result }, obj.callback);
+                break;
+            }
             case 'container:run': {
                 const result = await this.#dockerCommands?.containerRun(obj.message);
                 this.sendTo(obj.from, obj.command, { result }, obj.callback);
@@ -284,6 +289,11 @@ export class DockerManagerAdapter extends Adapter {
                 this.sendTo(obj.from, obj.command, { result }, obj.callback);
                 break;
             }
+            case 'container:prune': {
+                const result = await this.#dockerCommands?.containerPrune();
+                this.sendTo(obj.from, obj.command, { result }, obj.callback);
+                break;
+            }
             case 'network:create': {
                 const result = await this.#dockerCommands?.networkCreate(obj.message.name, obj.message.driver);
                 this.sendTo(obj.from, obj.command, { result }, obj.callback);
@@ -291,6 +301,11 @@ export class DockerManagerAdapter extends Adapter {
             }
             case 'network:remove': {
                 const result = await this.#dockerCommands?.networkRemove(obj.message.id);
+                this.sendTo(obj.from, obj.command, { result }, obj.callback);
+                break;
+            }
+            case 'network:prune': {
+                const result = await this.#dockerCommands?.networkPrune();
                 this.sendTo(obj.from, obj.command, { result }, obj.callback);
                 break;
             }
@@ -306,6 +321,21 @@ export class DockerManagerAdapter extends Adapter {
             case 'volume:remove': {
                 const result = await this.#dockerCommands?.volumeRemove(obj.message.id);
                 this.sendTo(obj.from, obj.command, { result }, obj.callback);
+                break;
+            }
+            case 'volume:prune': {
+                const result = await this.#dockerCommands?.volumePrune();
+                this.sendTo(obj.from, obj.command, { result }, obj.callback);
+                break;
+            }
+
+            case 'info': {
+                this.sendTo(
+                    obj.from,
+                    obj.command,
+                    { result: await this.#dockerCommands?.getDockerDaemonInfo() },
+                    obj.callback,
+                );
                 break;
             }
 
