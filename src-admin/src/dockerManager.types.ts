@@ -1,3 +1,12 @@
+interface HealthConfig {
+    Test?: string[] | undefined;
+    Interval?: number | undefined;
+    Timeout?: number | undefined;
+    StartPeriod?: number | undefined;
+    StartInterval?: number | undefined;
+    Retries?: number | undefined;
+}
+
 export type ImageName = string;
 export type ContainerName = string;
 export type DockerContainerInspect = {
@@ -224,12 +233,14 @@ export type DockerImageInspect = {
     };
     RootFS: {
         Type: string;
-        Layers: string[];
+        Layers?: string[];
+        BaseLayer?: string | undefined;
     };
-    Metadata: {
+    Metadata?: {
         LastTagTime: string;
     };
     Config: {
+        Hostname: string;
         Cmd: null | string[];
         Entrypoint: string[];
         Env: string[];
@@ -239,6 +250,16 @@ export type DockerImageInspect = {
         User: string;
         Volumes: null | Record<string, unknown>;
         WorkingDir: string;
+        Domainname: string;
+        AttachStdin: boolean;
+        AttachStdout: boolean;
+        AttachStderr: boolean;
+        Tty: boolean;
+        OpenStdin: boolean;
+        StdinOnce: boolean;
+        ArgsEscaped: boolean;
+        Image: string;
+        Healthcheck?: HealthConfig | undefined;
     };
 };
 
@@ -319,9 +340,9 @@ export interface DeviceMapping {
 
 export interface VolumeMount {
     /** bind | volume | tmpfs | npipe */
-    type: 'bind' | 'volume' | 'tmpfs' | 'npipe';
+    type: 'bind' | 'volume' | 'tmpfs' | 'npipe' | 'image';
     /** host path or named volume */
-    source?: string;
+    source?: string | true;
     /** container path (mountpoint) */
     target: string;
     /** read-only mount */
@@ -343,6 +364,12 @@ export interface VolumeMount {
         size?: number; // bytes
         mode?: number; // e.g. 1777
     };
+    /** ioBroker custom: if true, the folder will be copied into newly created volume */
+    iobAutoCopyFrom?: string;
+    /** Copy files from host to volume even if volume is not empty */
+    iobAutoCopyFromForce?: boolean;
+    /** If this folder should be "backup"ed by ioBroker */
+    iobBackup?: boolean;
 }
 
 export interface Resources {
@@ -474,7 +501,7 @@ export interface ContainerConfig {
     build?: BuildConfig;
 
     /** --name */
-    name: ContainerName;
+    name: ContainerName | true;
 
     /** Command & Entrypoint */
     command?: string[] | string; // CMD override
@@ -529,7 +556,7 @@ export interface ContainerConfig {
     dns?: DNSConfig;
 
     /** Networks */
-    networkMode?: NetworkMode; // --network
+    networkMode?: NetworkMode | true; // --network
     networkContainer?: string; // when networkMode === "container"
     networks?: NetworkAttachment[]; // compose-style multiple networks
 

@@ -315,11 +315,11 @@ export default class DockerManager {
             macAddress: inspect.NetworkSettings.MacAddress ?? undefined,
             environment: inspect.Config.Env
                 ? Object.fromEntries(
-                    inspect.Config.Env.map(e => {
-                        const [key, ...rest] = e.split('=');
-                        return [key, rest.join('=')];
-                    }),
-                )
+                      inspect.Config.Env.map(e => {
+                          const [key, ...rest] = e.split('=');
+                          return [key, rest.join('=')];
+                      }),
+                  )
                 : undefined,
             labels: inspect.Config.Labels ?? undefined,
             tty: inspect.Config.Tty,
@@ -331,13 +331,13 @@ export default class DockerManager {
             publishAllPorts: inspect.HostConfig.PublishAllPorts,
             ports: inspect.HostConfig.PortBindings
                 ? Object.entries(inspect.HostConfig.PortBindings).flatMap(([containerPort, bindings]) =>
-                    bindings.map(binding => ({
-                        containerPort: containerPort.split('/')[0],
-                        protocol: (containerPort.split('/')[1] as 'tcp' | 'udp') || 'tcp',
-                        hostPort: binding.HostPort,
-                        hostIP: binding.HostIp,
-                    })),
-                )
+                      bindings.map(binding => ({
+                          containerPort: containerPort.split('/')[0],
+                          protocol: (containerPort.split('/')[1] as 'tcp' | 'udp') || 'tcp',
+                          hostPort: binding.HostPort,
+                          hostIP: binding.HostIp,
+                      })),
+                  )
                 : undefined,
             mounts: inspect.Mounts?.map(mount => ({
                 type: mount.Type,
@@ -355,12 +355,12 @@ export default class DockerManager {
             networkMode: inspect.HostConfig.NetworkMode,
             networks: inspect.NetworkSettings.Networks
                 ? Object.entries(inspect.NetworkSettings.Networks).map(([name, net]) => ({
-                    name,
-                    aliases: net.Aliases ?? undefined,
-                    ipv4Address: net.IPAddress,
-                    ipv6Address: net.GlobalIPv6Address,
-                    driverOpts: net.DriverOpts ?? undefined,
-                }))
+                      name,
+                      aliases: net.Aliases ?? undefined,
+                      ipv4Address: net.IPAddress,
+                      ipv6Address: net.GlobalIPv6Address,
+                      driverOpts: net.DriverOpts ?? undefined,
+                  }))
                 : undefined,
             restart: {
                 policy: inspect.HostConfig.RestartPolicy.Name as any,
@@ -551,6 +551,9 @@ export default class DockerManager {
      * @param container Container configuration
      */
     async #ensureActualConfiguration(container: ContainerConfig): Promise<void> {
+        if (container.name === true) {
+            throw new Error(`Container name must be a string, but got boolean true`);
+        }
         // Check the configuration of the container
         const inspect = await this.containerInspect(container.name);
         if (inspect) {
@@ -604,11 +607,24 @@ export default class DockerManager {
         let images = await this.imageList();
         let anyStartedOrRunning = false;
         const networkChecked: string[] = [];
+        const prefix = `iob_${this.adapter.namespace.replace(/[-.]/g, '_')}`;
         for (let c = 0; c < this.#ownContainers.length; c++) {
             const container = this.#ownContainers[c];
             if (container.iobEnabled !== false) {
                 if (!container.image.includes(':')) {
                     container.image += ':latest';
+                }
+                if (container.labels?.iobroker !== this.adapter.namespace) {
+                    container.labels = { ...container.labels, iobroker: this.adapter.namespace };
+                }
+                if (container.name === true) {
+                    container.name = prefix;
+                }
+
+                // Name of the container, name of the network and name of the volume must start with iob_<Adaptername>_<instance>_
+                if (container.name !== prefix && !container.name.startsWith(`${prefix}_`)) {
+                    this.adapter.log.debug(`Renaming container ${container.name} to be prefixed with iob_${prefix}_`);
+                    container.name = `${prefix}_${container.name}`;
                 }
 
                 try {
@@ -620,6 +636,16 @@ export default class DockerManager {
                         container.networkMode !== 'bridge' &&
                         container.networkMode !== 'none'
                     ) {
+                        if (container.networkMode === true) {
+                            container.networkMode = prefix;
+                        }
+                        if (container.networkMode !== prefix && !container.networkMode.startsWith(`${prefix}_`)) {
+                            this.adapter.log.debug(
+                                `Renaming network ${container.networkMode} to be prefixed with ${prefix}_`,
+                            );
+                            container.networkMode = `${prefix}_${container.networkMode}`;
+                        }
+
                         if (!networkChecked.includes(container.networkMode)) {
                             // check if the network exists
                             const networks = await this.networkList();
@@ -638,6 +664,31 @@ export default class DockerManager {
                         const volumes = await this.volumeList();
                         for (const mount of container.mounts) {
                             if (mount.type === 'volume' && mount.source) {
+                                if (mount.source === true) {
+                                    mount.source = prefix;
+                                }
+
+                                if (mount.source !== prefix && !mount.source.startsWith(`${prefix}_`)) {
+                                    this.adapter.log.debug(
+                                        `Renaming volume ${mount.source} to be prefixed with ${prefix}_`,
+                                    );
+                                    mount.source = `${prefix}_${mount.source}`;
+                                }
+                                if (mount.iobBackup) {
+                                    if (!container.labels.iob_backup) {
+                                        container.labels = { ...container.labels, iob_backup: mount.source };
+                                    } else {
+                                        const volumes: string[] = container.labels.iob_backup
+                                            .split(',')
+                                            .map(v => v.trim())
+                                            .filter(v => v);
+                                        if (!volumes.includes(mount.source)) {
+                                            volumes.push(mount.source);
+                                            container.labels = { ...container.labels, iob_backup: volumes.join(',') };
+                                        }
+                                    }
+                                }
+
                                 const volume = volumes.find(v => v.name === mount.source);
                                 if (!volume) {
                                     this.adapter.log.info(`Creating docker volume ${mount.source}`);
@@ -738,7 +789,7 @@ export default class DockerManager {
         // Check the status of own containers
         for (let c = 0; c < this.#ownContainers.length; c++) {
             const container = this.#ownContainers[c];
-            if (container.iobEnabled !== false && container.iobMonitoringEnabled) {
+            if (container.iobEnabled !== false && container.iobMonitoringEnabled && container.name !== true) {
                 // Check if container is running
                 const running = containers.find(it => it.names === container.name);
                 if (!running || (running.status !== 'running' && running.status !== 'restarting')) {
@@ -1080,14 +1131,14 @@ export default class DockerManager {
             for (const mount of config.mounts) {
                 let volumeOptions:
                     | {
-                    NoCopy: boolean;
-                    Labels: { [label: string]: string };
-                    DriverConfig: {
-                        Name: string;
-                        Options: { [option: string]: string };
-                    };
-                    Subpath?: string;
-                }
+                          NoCopy: boolean;
+                          Labels: { [label: string]: string };
+                          DriverConfig: {
+                              Name: string;
+                              Options: { [option: string]: string };
+                          };
+                          Subpath?: string;
+                      }
                     | undefined;
                 if (mount.volumeOptions) {
                     if (mount.volumeOptions.nocopy !== undefined) {
@@ -1117,8 +1168,8 @@ export default class DockerManager {
                 }
                 let bindOptions:
                     | {
-                    Propagation: MountPropagation;
-                }
+                          Propagation: MountPropagation;
+                      }
                     | undefined;
                 if (mount.bindOptions) {
                     if (mount.bindOptions.propagation) {
@@ -1131,9 +1182,9 @@ export default class DockerManager {
 
                 let tmpfsOptions:
                     | {
-                    SizeBytes: number;
-                    Mode: number;
-                }
+                          SizeBytes: number;
+                          Mode: number;
+                      }
                     | undefined;
                 if (mount.tmpfsOptions) {
                     if (mount.tmpfsOptions.size !== undefined) {
@@ -1151,6 +1202,9 @@ export default class DockerManager {
                         tmpfsOptions.Mode = mount.tmpfsOptions.mode;
                     }
                 }
+                if (mount.source === true) {
+                    throw new Error(`Mount source must be a string, but got boolean true`);
+                }
 
                 const m: MountSettings = {
                     Target: mount.target,
@@ -1166,6 +1220,9 @@ export default class DockerManager {
                 mounts.push(m);
             }
         }
+        if (config.name === true) {
+            throw new Error(`Container name must be a string, but got boolean true`);
+        }
 
         return {
             name: config.name,
@@ -1173,8 +1230,8 @@ export default class DockerManager {
             Cmd: Array.isArray(config.command)
                 ? config.command
                 : typeof config.command === 'string'
-                    ? [config.command]
-                    : undefined,
+                  ? [config.command]
+                  : undefined,
             Entrypoint: config.entrypoint,
             Env: config.environment
                 ? Object.keys(config.environment).map(key => `${key}=${config.environment![key]}`)
@@ -1185,31 +1242,31 @@ export default class DockerManager {
             Labels: config.labels,
             ExposedPorts: config.ports
                 ? config.ports.reduce(
-                    (acc, port) => {
-                        acc[`${port.containerPort}/${port.protocol || 'tcp'}`] = {};
-                        return acc;
-                    },
-                    {} as { [key: string]: object },
-                )
+                      (acc, port) => {
+                          acc[`${port.containerPort}/${port.protocol || 'tcp'}`] = {};
+                          return acc;
+                      },
+                      {} as { [key: string]: object },
+                  )
                 : undefined,
             HostConfig: {
                 // Binds: config.binds,
                 PortBindings: config.ports
                     ? config.ports.reduce(
-                        (acc, port) => {
-                            acc[`${port.containerPort}/${port.protocol || 'tcp'}`] = [
-                                {
-                                    HostPort: port.hostPort ? port.hostPort.toString() : undefined,
-                                    HostIp: port.hostIP || undefined,
-                                },
-                            ];
-                            return acc;
-                        },
-                        {} as { [key: string]: Array<{ HostPort?: string; HostIp?: string }> },
-                    )
+                          (acc, port) => {
+                              acc[`${port.containerPort}/${port.protocol || 'tcp'}`] = [
+                                  {
+                                      HostPort: port.hostPort ? port.hostPort.toString() : undefined,
+                                      HostIp: port.hostIP || undefined,
+                                  },
+                              ];
+                              return acc;
+                          },
+                          {} as { [key: string]: Array<{ HostPort?: string; HostIp?: string }> },
+                      )
                     : undefined,
                 Mounts: mounts,
-                NetworkMode: config.networkMode,
+                NetworkMode: config.networkMode === true ? '' : config.networkMode || undefined,
                 // Links: config.links,
                 // Dns: config.dns,
                 // DnsOptions: config.dnsOptions,
@@ -1239,9 +1296,9 @@ export default class DockerManager {
                 // OomScoreAdj: config.resources?.oomScoreAdj,
                 LogConfig: config.logging
                     ? {
-                        Type: config.logging.driver || 'json-file',
-                        Config: config.logging.options || {},
-                    }
+                          Type: config.logging.driver || 'json-file',
+                          Config: config.logging.options || {},
+                      }
                     : undefined,
                 SecurityOpt: [
                     ...(config.security?.seccomp ? [`seccomp=${config.security.seccomp}`] : []),
@@ -1486,8 +1543,8 @@ export default class DockerManager {
                 Entrypoint: Array.isArray(data.Config.Entrypoint)
                     ? data.Config.Entrypoint
                     : typeof data.Config.Entrypoint === 'string'
-                        ? [data.Config.Entrypoint]
-                        : [],
+                      ? [data.Config.Entrypoint]
+                      : [],
             },
         };
     }
@@ -1934,7 +1991,7 @@ export default class DockerManager {
         }
 
         // name
-        if (config.name) {
+        if (config.name && config.name !== true) {
             args.push('--name', config.name);
         }
 
@@ -2053,7 +2110,7 @@ export default class DockerManager {
         }
 
         // network
-        if (config.networkMode) {
+        if (config.networkMode && typeof config.networkMode === 'string') {
             args.push('--network', config.networkMode);
         }
 
@@ -2335,7 +2392,7 @@ export default class DockerManager {
         }
 
         for (const container of this.#ownContainers) {
-            if (container.iobEnabled !== false && container.iobStopOnUnload) {
+            if (container.iobEnabled !== false && container.iobStopOnUnload && container.name !== true) {
                 this.adapter.log.info(`Stopping own container ${container.name} on destroy`);
                 try {
                     await this.containerStop(container.name);

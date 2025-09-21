@@ -333,9 +333,9 @@ export interface DeviceMapping {
 
 export interface VolumeMount {
     /** bind | volume | tmpfs | npipe */
-    type: 'bind' | 'volume' | 'tmpfs' | 'npipe';
+    type: 'bind' | 'volume' | 'tmpfs' | 'npipe' | 'image';
     /** host path or named volume */
-    source?: string;
+    source?: string | true;
     /** container path (mountpoint) */
     target: string;
     /** read-only mount */
@@ -361,6 +361,8 @@ export interface VolumeMount {
     iobAutoCopyFrom?: string;
     /** Copy files from host to volume even if volume is not empty */
     iobAutoCopyFromForce?: boolean;
+    /** If this folder should be "backup"ed by ioBroker */
+    iobBackup?: boolean;
 }
 
 export interface Resources {
@@ -492,7 +494,7 @@ export interface ContainerConfig {
     build?: BuildConfig;
 
     /** --name */
-    name: ContainerName;
+    name: ContainerName | true;
 
     /** Command & Entrypoint */
     command?: string[] | string; // CMD override
@@ -547,7 +549,7 @@ export interface ContainerConfig {
     dns?: DNSConfig;
 
     /** Networks */
-    networkMode?: NetworkMode; // --network
+    networkMode?: NetworkMode | true; // --network
     networkContainer?: string; // when networkMode === "container"
     networks?: NetworkAttachment[]; // compose-style multiple networks
 
