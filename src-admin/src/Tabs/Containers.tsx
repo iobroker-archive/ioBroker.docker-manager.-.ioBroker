@@ -990,6 +990,7 @@ export default class ContainersTab extends Component<ContainersTabProps, Contain
                                             fontSize: 'smaller',
                                             fontStyle: 'italic',
                                             color: this.getInstanceColor(container),
+                                            height: 16.67,
                                         }}
                                     >
                                         {container.labels?.iobroker || ''}

@@ -48,11 +48,39 @@ In ioBroker notation, it is like an instance of an adapter.
     - On Linux: `systemctl status docker`
     - On Windows and macOS, Docker Desktop should be running.
 
+## Using Docker API
+
+The adapter could use the Docker API to communicate with the Docker daemon on other hosts. To enable this feature, you need to configure the Docker daemon to listen on a TCP socket.
+
+### Enable Docker API on Linux
+
+1. Open the Docker service configuration file. The location of this file may vary depending on your Linux distribution. Common locations include:
+    - `/lib/systemd/system/docker.service`
+    - `/etc/docker/daemon.json`
+    - `/etc/systemd/system/docker.service`
+2. If the file is `/etc/docker/daemon.json`, add or modify the `hosts` entry to include the TCP socket. For example:
+    ```json
+    {
+        "hosts": ["unix:///var/run/docker.sock", "tcp://0.0.0.0:2375"]
+    }
+    ```
+    If the file is a systemd service file (e.g., `/lib/systemd/system/docker.service`), modify the `ExecStart` line to include the `-H tcp://0.0.0.0:2375` option. For example:
+    ```
+    ExecStart=/usr/bin/dockerd -H fd:// -H unix:///var/run/docker.sock -H tcp://0.0.0.0:2375 --containerd=/run/containerd/containerd.sock 
+    ```
+3. Save the changes and exit the editor.
+4. Restart the Docker service to apply the changes:
+    ```bash
+    sudo systemctl daemon-reload
+    sudo systemctl restart docker
+    ```
+5. Verify that the Docker daemon is listening on the TCP socket by running:
+    ```bash
+    netstat -tuln | grep 2375
+    ```
+
 ## Todo
-- Use labels to identify containers created by this adapter
-- Use API instead of CLI commands
-- Find solution to run iobroker in docker and manage docker containers
-- Place docker volumes in `/opt/iobroker/docker-volumes/influxdb.0`
+
 - BackItUp should support `/opt/iobroker/docker-volumes`
 - Think about js-controller will remove dockers which are not used anymore but has label
 - Docker Plugin like sentry??
@@ -63,6 +91,7 @@ In ioBroker notation, it is like an instance of an adapter.
 -->
 
 ## Changelog
+
 ### 0.1.0 (2025-09-17)
 
 - (@GermanBluefox) Added network tab

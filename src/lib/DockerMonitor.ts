@@ -2,11 +2,10 @@
 // it monitors periodically the docker daemon status.
 // It manages containers defined in adapter.config.containers and monitors other containers
 
-import { spawn } from 'node:child_process';
+import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process';
 import { networkInterfaces } from 'node:os';
 import { lookup } from 'node:dns/promises';
 import http from 'node:http';
-import type { ChildProcessWithoutNullStreams } from 'child_process';
 
 import type {
     ContainerConfig,
@@ -17,7 +16,7 @@ import type {
     VolumeDriver,
     VolumeInfo,
 } from './dockerManager.types';
-import { inRange, isIP } from 'range_check';
+import { inRange, isIP, isV4, isV6 } from 'range_check';
 import DockerManager from './DockerManager';
 import type { DockerManagerAdapter } from '../main';
 
@@ -95,12 +94,24 @@ export default class DockerMonitor extends DockerManager {
         };
     } = {};
     readonly checkedURLs: { [url: string]: boolean | 'timeout' } = {};
+    // Browser IPs or domain names
     #ownIps: string[] = [];
-    #domain2ip: { [domain: string]: string | false } = {};
+    #domain2ip: { [domain: string]: string | false } = { localhost: '127.0.0.1' };
     #adapter: DockerManagerAdapter;
 
-    constructor(adapter: DockerManagerAdapter) {
-        super(adapter);
+    constructor(
+        adapter: DockerManagerAdapter,
+        options?: {
+            dockerApi?: boolean;
+            dockerApiHost?: string;
+            dockerApiPort?: number | string;
+            dockerApiProtocol?: 'http' | 'https';
+        },
+    ) {
+        if (options?.dockerApiHost === 'localhost') {
+            options.dockerApiHost = '127.0.0.1';
+        }
+        super(adapter, options);
         this.#adapter = adapter;
     }
 
@@ -284,10 +295,10 @@ export default class DockerMonitor extends DockerManager {
         }
     }
 
-    async containerList(all: boolean = true, ownIps?: string[]): Promise<ContainerInfo[]> {
+    async containerList(all: boolean = true, browserIPs?: string[]): Promise<ContainerInfo[]> {
         try {
             const containers = await super.containerList(all);
-            if (ownIps) {
+            if (browserIPs) {
                 // Try to define if the provided ports are HTTP server
                 for (const container of containers) {
                     if (!container.ports || container.status !== 'running') {
@@ -301,33 +312,61 @@ export default class DockerMonitor extends DockerManager {
                             const [hostIp, hostPort] = parts[0].split(':');
                             const [, protocol] = parts[1].split('/');
                             if (protocol === 'tcp') {
-                                // request to the port and check if we get HTTP response
-                                // create url
-                                const url = `http://${hostIp === '127.0.0.1' ? 'localhost' : hostIp}:${hostPort}`;
-                                if (this.checkedURLs[url] === undefined || this.checkedURLs[url] === 'timeout') {
-                                    this.checkedURLs[url] = await isHttpResponse(url);
+                                let url = `http://${isV6(hostIp) ? `[${hostIp}]` : hostIp}:${hostPort}`;
+                                if (
+                                    this.options.dockerApi &&
+                                    (hostIp === 'localhost' || hostIp === '127.0.0.1') &&
+                                    hostIp !== this.options.dockerApiHost
+                                ) {
+                                    this.checkedURLs[url] = false;
+                                    continue; // skip checking localhost ports if docker API is used
                                 }
-                                if (this.checkedURLs[url] === true) {
-                                    if (hostIp === '0.0.0.0') {
-                                        // find the local network interface IP that suits to ownIp
-                                        for (const ownIp of ownIps) {
+                                if (
+                                    this.options.dockerApi &&
+                                    this.options.dockerApiHost &&
+                                    !isIP(this.options.dockerApiHost)
+                                ) {
+                                    this.#domain2ip[this.options.dockerApiHost] ||= await getIpForDomain(
+                                        this.options.dockerApiHost,
+                                    );
+                                }
+
+                                if (hostIp === '::' || hostIp === '0.0.0.0') {
+                                    // find the network interface IP that suits to hostIp
+                                    for (const ownIp of browserIPs) {
+                                        if (this.options.dockerApi && this.options.dockerApiHost) {
+                                            const realIp =
+                                                this.#domain2ip[this.options.dockerApiHost] ||
+                                                this.options.dockerApiHost;
+                                            url = url
+                                                .replace('0.0.0.0', isV6(realIp) ? `[${realIp}]` : realIp)
+                                                .replace('[::]', isV6(realIp) ? `[${realIp}]` : realIp);
+                                        } else {
                                             const realIp = this.#domain2ip[ownIp] || ownIp;
                                             if (isIP(realIp)) {
                                                 const hostIp = findOwnIpFor(this.#domain2ip[ownIp] || ownIp);
-                                                container.httpLinks ||= {};
-                                                container.httpLinks[ownIp] ||= [];
                                                 if (hostIp) {
-                                                    container.httpLinks[ownIp].push(url.replace('0.0.0.0', ownIp));
-                                                } else {
-                                                    container.httpLinks[ownIp].push(url);
+                                                    url = url
+                                                        .replace('0.0.0.0', isV6(ownIp) ? `[${ownIp}]` : ownIp)
+                                                        .replace('[::]', isV6(ownIp) ? `[${ownIp}]` : ownIp);
                                                 }
                                             }
                                         }
-                                    } else {
-                                        for (const ownIp of ownIps) {
+                                        // request to the port and check if we get HTTP response
+                                        // create url
+                                        if (
+                                            !url.includes('0.0.0.0') &&
+                                            !url.includes('[::]') &&
+                                            (this.checkedURLs[url] === undefined || this.checkedURLs[url] === 'timeout')
+                                        ) {
+                                            this.checkedURLs[url] = await isHttpResponse(url);
+                                        }
+                                        if (this.checkedURLs[url] === true) {
                                             container.httpLinks ||= {};
                                             container.httpLinks[ownIp] ||= [];
-                                            container.httpLinks[ownIp].push(url);
+                                            if (!container.httpLinks[ownIp].includes(url)) {
+                                                container.httpLinks[ownIp].push(url);
+                                            }
                                         }
                                     }
                                 }
@@ -679,7 +718,7 @@ export default class DockerMonitor extends DockerManager {
             this.#timers.volumes = undefined;
         }
 
-        if (scan.containers) {
+        if (scan.containers?.length) {
             this.#ownIps = scan.containers;
             // try to find for all domain names the own IP
             for (const ipOrDomain of scan.containers) {

@@ -38,46 +38,56 @@ export default class OptionsTab extends Component<OptionsTabProps, object> {
                         label={I18n.t('Manage docker via API')}
                     />
                     {this.props.native.dockerApi ? (
-                        <TextField
-                            label={I18n.t('Docker API Host')}
-                            fullWidth
-                            variant="standard"
-                            value={this.props.native.dockerApiHost}
-                            onChange={e => this.props.onChange('dockerApiHost', e.target.value)}
-                            helperText={I18n.t('Like 192.168.1.10')}
-                        />
-                    ) : null}
-                    {this.props.native.dockerApi ? (
-                        <TextField
-                            label={I18n.t('Docker API Port')}
-                            fullWidth
-                            type="number"
-                            slotProps={{
-                                htmlInput: {
-                                    min: 1,
-                                    max: 0xffff,
-                                },
-                            }}
-                            variant="standard"
-                            value={this.props.native.dockerApiPort}
-                            onChange={e => this.props.onChange('dockerApiPort', e.target.value)}
-                        />
-                    ) : null}
-                    {this.props.native.dockerApi ? (
-                        <FormControl
-                            fullWidth
-                            variant="standard"
-                        >
-                            <InputLabel>{I18n.t('Docker API Protocol')}</InputLabel>
-                            <Select
+                        <div>
+                            <FormControl
+                                style={{
+                                    width: '100%',
+                                    maxWidth: 80,
+                                    marginRight: 10,
+                                }}
                                 variant="standard"
-                                value={this.props.native.dockerApiProtocol || 'http'}
-                                onChange={e => this.props.onChange('dockerApiProtocol', e.target.value)}
                             >
-                                <MenuItem value="http">http</MenuItem>
-                                <MenuItem value="https">https</MenuItem>
-                            </Select>
-                        </FormControl>
+                                <InputLabel>{I18n.t('Protocol')}</InputLabel>
+                                <Select
+                                    variant="standard"
+                                    value={this.props.native.dockerApiProtocol || 'http'}
+                                    onChange={e => this.props.onChange('dockerApiProtocol', e.target.value)}
+                                >
+                                    <MenuItem value="http">http</MenuItem>
+                                    <MenuItem value="https">https</MenuItem>
+                                </Select>
+                            </FormControl>
+                            <TextField
+                                label={I18n.t('Docker API Host')}
+                                style={{
+                                    width: '100%',
+                                    maxWidth: 200,
+                                    marginRight: 10,
+                                }}
+                                variant="standard"
+                                value={this.props.native.dockerApiHost}
+                                onChange={e => this.props.onChange('dockerApiHost', e.target.value)}
+                                helperText={I18n.t('Like 192.168.1.10')}
+                            />
+                            <TextField
+                                label={I18n.t('Port')}
+                                style={{
+                                    width: '100%',
+                                    maxWidth: 100,
+                                    marginRight: 10,
+                                }}
+                                type="number"
+                                slotProps={{
+                                    htmlInput: {
+                                        min: 1,
+                                        max: 0xffff,
+                                    },
+                                }}
+                                variant="standard"
+                                value={this.props.native.dockerApiPort}
+                                onChange={e => this.props.onChange('dockerApiPort', e.target.value)}
+                            />
+                        </div>
                     ) : null}
                 </div>
             </Paper>

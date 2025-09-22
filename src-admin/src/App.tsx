@@ -279,9 +279,18 @@ export default class App extends GenericApp<GenericAppProps, AppState> {
             );
     }
 
-    onAlive = (_id: string, state: ioBroker.State | null | undefined): void => {
+    onAlive = async (_id: string, state: ioBroker.State | null | undefined): Promise<void> => {
         if (state?.val && !this.state.alive) {
-            this.setState({ alive: true });
+            const dockerInfo: {
+                result: {
+                    version?: string;
+                    daemonRunning?: boolean;
+                    removeSupported?: boolean;
+                    driver: 'socket' | 'cli' | 'http' | 'https';
+                };
+            } = await this.socket.sendTo(`docker-manager.${this.instance}`, 'info', {});
+
+            this.setState({ alive: true, dockerInfo: dockerInfo.result });
             this.refreshBackendSubscription(true);
         } else if (!state?.val && this.state.alive) {
             if (this.refreshTimer) {
@@ -370,6 +379,9 @@ export default class App extends GenericApp<GenericAppProps, AppState> {
     }
 
     renderImagesTab(): React.ReactNode {
+        if (!this.state.dockerInfo?.daemonRunning) {
+            return null;
+        }
         return (
             <ImagesTab
                 alive={this.state.alive}
@@ -384,6 +396,9 @@ export default class App extends GenericApp<GenericAppProps, AppState> {
     }
 
     renderContainersTab(): React.ReactNode {
+        if (!this.state.dockerInfo?.daemonRunning) {
+            return null;
+        }
         return (
             <ContainersTab
                 theme={this.state.theme}
@@ -402,6 +417,9 @@ export default class App extends GenericApp<GenericAppProps, AppState> {
     }
 
     renderNetworksTab(): React.ReactNode {
+        if (!this.state.dockerInfo?.daemonRunning) {
+            return null;
+        }
         return (
             <NetworksTab
                 alive={this.state.alive}
@@ -414,6 +432,9 @@ export default class App extends GenericApp<GenericAppProps, AppState> {
     }
 
     renderVolumesTab(): React.ReactNode {
+        if (!this.state.dockerInfo?.daemonRunning) {
+            return null;
+        }
         return (
             <VolumesTab
                 alive={this.state.alive}
@@ -450,6 +471,17 @@ export default class App extends GenericApp<GenericAppProps, AppState> {
             );
         }
 
+        let selectedTab = this.state.selectedTab;
+        // if the daemon is not running, force to info tab
+        if (
+            !this.state.dockerInfo?.daemonRunning &&
+            this.state.selectedTab !== 'options' &&
+            this.state.selectedTab !== 'info' &&
+            !this.isTab
+        ) {
+            selectedTab = 'options';
+        }
+
         return (
             <StyledEngineProvider injectFirst>
                 <ThemeProvider theme={this.state.theme}>
@@ -463,7 +495,7 @@ export default class App extends GenericApp<GenericAppProps, AppState> {
                     >
                         <AppBar position="static">
                             <Tabs
-                                value={this.state.selectedTab || 'info'}
+                                value={selectedTab || 'info'}
                                 onChange={(_e, value) => {
                                     this.setState({ selectedTab: value }, () => this.refreshBackendSubscription());
 
@@ -480,26 +512,34 @@ export default class App extends GenericApp<GenericAppProps, AppState> {
                                     label={I18n.t('General')}
                                     value="info"
                                 />
-                                <Tab
-                                    sx={{ '&.Mui-selected': styles.selected }}
-                                    label={I18n.t('Images')}
-                                    value="images"
-                                />
-                                <Tab
-                                    sx={{ '&.Mui-selected': styles.selected }}
-                                    label={I18n.t('Networks')}
-                                    value="networks"
-                                />
-                                <Tab
-                                    sx={{ '&.Mui-selected': styles.selected }}
-                                    label={I18n.t('Volumes')}
-                                    value="volumes"
-                                />
-                                <Tab
-                                    sx={{ '&.Mui-selected': styles.selected }}
-                                    label={I18n.t('Containers')}
-                                    value="containers"
-                                />
+                                {this.state.dockerInfo?.daemonRunning ? (
+                                    <Tab
+                                        sx={{ '&.Mui-selected': styles.selected }}
+                                        label={I18n.t('Images')}
+                                        value="images"
+                                    />
+                                ) : null}
+                                {this.state.dockerInfo?.daemonRunning ? (
+                                    <Tab
+                                        sx={{ '&.Mui-selected': styles.selected }}
+                                        label={I18n.t('Networks')}
+                                        value="networks"
+                                    />
+                                ) : null}
+                                {this.state.dockerInfo?.daemonRunning ? (
+                                    <Tab
+                                        sx={{ '&.Mui-selected': styles.selected }}
+                                        label={I18n.t('Volumes')}
+                                        value="volumes"
+                                    />
+                                ) : null}
+                                {this.state.dockerInfo?.daemonRunning ? (
+                                    <Tab
+                                        sx={{ '&.Mui-selected': styles.selected }}
+                                        label={I18n.t('Containers')}
+                                        value="containers"
+                                    />
+                                ) : null}
                                 {this.isTab ? null : (
                                     <Tab
                                         sx={{ '&.Mui-selected': styles.selected }}
@@ -544,15 +584,15 @@ export default class App extends GenericApp<GenericAppProps, AppState> {
                         </AppBar>
 
                         <div style={styles.tabContentNoSave}>
-                            {(!this.state.selectedTab || this.state.selectedTab === 'info') && this.renderInfoTab()}
-                            {this.state.selectedTab === 'images' && this.renderImagesTab()}
-                            {this.state.selectedTab === 'containers' && this.renderContainersTab()}
-                            {this.state.selectedTab === 'networks' && this.renderNetworksTab()}
-                            {this.state.selectedTab === 'volumes' && this.renderVolumesTab()}
-                            {this.state.selectedTab === 'options' && this.renderOptionsTab()}
+                            {(!selectedTab || selectedTab === 'info') && this.renderInfoTab()}
+                            {selectedTab === 'images' && this.renderImagesTab()}
+                            {selectedTab === 'containers' && this.renderContainersTab()}
+                            {selectedTab === 'networks' && this.renderNetworksTab()}
+                            {selectedTab === 'volumes' && this.renderVolumesTab()}
+                            {selectedTab === 'options' && this.renderOptionsTab()}
                         </div>
                         {this.renderError()}
-                        {this.state.selectedTab === 'options' ? this.renderSaveCloseButtons() : null}
+                        {!this.isTab && selectedTab === 'options' ? this.renderSaveCloseButtons() : null}
                     </div>
                 </ThemeProvider>
             </StyledEngineProvider>

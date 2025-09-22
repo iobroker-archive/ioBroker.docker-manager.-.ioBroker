@@ -2,11 +2,11 @@ import { type AdapterOptions, Adapter } from '@iobroker/adapter-core';
 import type { DockerImageTagsResponse } from './lib/dockerManager.types';
 import type { GUIResponse } from './types';
 
-import DockerCommands from './lib/DockerMonitor';
+import DockerMonitor from './lib/DockerMonitor';
 import axios from 'axios';
 
 export class DockerManagerAdapter extends Adapter {
-    #dockerCommands: DockerCommands | undefined;
+    #dockerMonitor: DockerMonitor | undefined;
 
     #_guiSubscribes:
         | {
@@ -73,7 +73,7 @@ export class DockerManagerAdapter extends Adapter {
             }
         });
 
-        await this.#dockerCommands?.pollingUpdate(scans);
+        await this.#dockerMonitor?.pollingUpdate(scans);
     }
 
     onClientSubscribe(
@@ -123,10 +123,10 @@ export class DockerManagerAdapter extends Adapter {
         if (msg.type === 'containers' && msg.data?.containerId) {
             if (msg.data.terminate) {
                 // terminate execution
-                void this.#dockerCommands?.containerExecTerminate(msg.data.containerId, true);
+                void this.#dockerMonitor?.containerExecTerminate(msg.data.containerId, true);
             } else {
                 // start execution
-                void this.#dockerCommands?.containerExec(msg.data.containerId, msg.data.command!, clientId);
+                void this.#dockerMonitor?.containerExec(msg.data.containerId, msg.data.command!, clientId);
             }
         }
 
@@ -142,7 +142,7 @@ export class DockerManagerAdapter extends Adapter {
         do {
             deleted = false;
             const pos = this.#_guiSubscribes.findIndex(s => s.clientId === clientId);
-            void this.#dockerCommands?.containerExecTerminate(clientId, false, true);
+            void this.#dockerMonitor?.containerExecTerminate(clientId, false, true);
             if (pos !== -1) {
                 deleted = true;
                 this.#_guiSubscribes.splice(pos, 1);
@@ -179,16 +179,16 @@ export class DockerManagerAdapter extends Adapter {
 
     async #onReady(): Promise<void> {
         this.log.info(`Adapter matter-controller started`);
-        this.#dockerCommands = new DockerCommands(this);
-        await this.#dockerCommands.isReady();
+        this.#dockerMonitor = new DockerMonitor(this, this.config);
+        await this.#dockerMonitor.isReady();
         this.#_guiSubscribes = [];
         await this.scanRequests();
     }
 
     async #onUnload(callback: () => void): Promise<void> {
         try {
-            await this.#dockerCommands?.destroy();
-            this.#dockerCommands = undefined;
+            await this.#dockerMonitor?.destroy();
+            this.#dockerMonitor = undefined;
             // inform GUI about stop
             await this.sendToGui({ command: 'stopped' });
         } catch {
@@ -215,7 +215,7 @@ export class DockerManagerAdapter extends Adapter {
 
         switch (obj.command) {
             case 'image:autocomplete': {
-                const result = await this.#dockerCommands?.imageNameAutocomplete(obj.message.image);
+                const result = await this.#dockerMonitor?.imageNameAutocomplete(obj.message.image);
                 this.sendTo(obj.from, obj.command, { result }, obj.callback);
                 break;
             }
@@ -225,92 +225,92 @@ export class DockerManagerAdapter extends Adapter {
                 break;
             }
             case 'image:pull': {
-                const result = await this.#dockerCommands?.imagePull(obj.message.image);
+                const result = await this.#dockerMonitor?.imagePull(obj.message.image);
                 this.sendTo(obj.from, obj.command, { result }, obj.callback);
                 break;
             }
             case 'image:inspect': {
-                const result = await this.#dockerCommands?.imageInspect(obj.message.image);
+                const result = await this.#dockerMonitor?.imageInspect(obj.message.image);
                 this.sendTo(obj.from, obj.command, { result }, obj.callback);
                 break;
             }
             case 'image:remove': {
-                const result = await this.#dockerCommands?.imageRemove(obj.message.image);
+                const result = await this.#dockerMonitor?.imageRemove(obj.message.image);
                 this.sendTo(obj.from, obj.command, { result }, obj.callback);
                 break;
             }
             case 'image:list': {
-                const result = await this.#dockerCommands?.imageList();
+                const result = await this.#dockerMonitor?.imageList();
                 this.sendTo(obj.from, obj.command, { result }, obj.callback);
                 break;
             }
             case 'image:prune': {
-                const result = await this.#dockerCommands?.imagePrune();
+                const result = await this.#dockerMonitor?.imagePrune();
                 this.sendTo(obj.from, obj.command, { result }, obj.callback);
                 break;
             }
             case 'container:run': {
-                const result = await this.#dockerCommands?.containerRun(obj.message);
+                const result = await this.#dockerMonitor?.containerRun(obj.message);
                 this.sendTo(obj.from, obj.command, { result }, obj.callback);
                 break;
             }
             case 'container:create': {
-                const result = await this.#dockerCommands?.containerCreate(obj.message);
+                const result = await this.#dockerMonitor?.containerCreate(obj.message);
                 this.sendTo(obj.from, obj.command, { result }, obj.callback);
                 break;
             }
             case 'container:stop': {
-                const result = await this.#dockerCommands?.containerStop(obj.message.id);
+                const result = await this.#dockerMonitor?.containerStop(obj.message.id);
                 this.sendTo(obj.from, obj.command, { result }, obj.callback);
                 break;
             }
             case 'container:inspect': {
-                const result = await this.#dockerCommands?.containerInspect(obj.message.id);
+                const result = await this.#dockerMonitor?.containerInspect(obj.message.id);
                 this.sendTo(obj.from, obj.command, { result }, obj.callback);
                 break;
             }
             case 'container:start': {
-                const result = await this.#dockerCommands?.containerStart(obj.message.id);
+                const result = await this.#dockerMonitor?.containerStart(obj.message.id);
                 this.sendTo(obj.from, obj.command, { result }, obj.callback);
                 break;
             }
             case 'container:restart': {
-                const result = await this.#dockerCommands?.containerRestart(obj.message.id);
+                const result = await this.#dockerMonitor?.containerRestart(obj.message.id);
                 this.sendTo(obj.from, obj.command, { result }, obj.callback);
                 break;
             }
             case 'container:remove': {
-                const result = await this.#dockerCommands?.containerRemove(obj.message.id);
+                const result = await this.#dockerMonitor?.containerRemove(obj.message.id);
                 this.sendTo(obj.from, obj.command, { result }, obj.callback);
                 break;
             }
             case 'container:logs': {
-                const result = await this.#dockerCommands?.containerLogs(obj.message.id);
+                const result = await this.#dockerMonitor?.containerLogs(obj.message.id);
                 this.sendTo(obj.from, obj.command, { result }, obj.callback);
                 break;
             }
             case 'container:prune': {
-                const result = await this.#dockerCommands?.containerPrune();
+                const result = await this.#dockerMonitor?.containerPrune();
                 this.sendTo(obj.from, obj.command, { result }, obj.callback);
                 break;
             }
             case 'network:create': {
-                const result = await this.#dockerCommands?.networkCreate(obj.message.name, obj.message.driver);
+                const result = await this.#dockerMonitor?.networkCreate(obj.message.name, obj.message.driver);
                 this.sendTo(obj.from, obj.command, { result }, obj.callback);
                 break;
             }
             case 'network:remove': {
-                const result = await this.#dockerCommands?.networkRemove(obj.message.id);
+                const result = await this.#dockerMonitor?.networkRemove(obj.message.id);
                 this.sendTo(obj.from, obj.command, { result }, obj.callback);
                 break;
             }
             case 'network:prune': {
-                const result = await this.#dockerCommands?.networkPrune();
+                const result = await this.#dockerMonitor?.networkPrune();
                 this.sendTo(obj.from, obj.command, { result }, obj.callback);
                 break;
             }
             case 'volume:create': {
-                const result = await this.#dockerCommands?.volumeCreate(
+                const result = await this.#dockerMonitor?.volumeCreate(
                     obj.message.name,
                     obj.message.driver,
                     obj.message.volume,
@@ -319,12 +319,12 @@ export class DockerManagerAdapter extends Adapter {
                 break;
             }
             case 'volume:remove': {
-                const result = await this.#dockerCommands?.volumeRemove(obj.message.id);
+                const result = await this.#dockerMonitor?.volumeRemove(obj.message.id);
                 this.sendTo(obj.from, obj.command, { result }, obj.callback);
                 break;
             }
             case 'volume:prune': {
-                const result = await this.#dockerCommands?.volumePrune();
+                const result = await this.#dockerMonitor?.volumePrune();
                 this.sendTo(obj.from, obj.command, { result }, obj.callback);
                 break;
             }
@@ -333,7 +333,7 @@ export class DockerManagerAdapter extends Adapter {
                 this.sendTo(
                     obj.from,
                     obj.command,
-                    { result: await this.#dockerCommands?.getDockerDaemonInfo() },
+                    { result: await this.#dockerMonitor?.getDockerDaemonInfo() },
                     obj.callback,
                 );
                 break;
