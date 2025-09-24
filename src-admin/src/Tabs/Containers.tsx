@@ -67,6 +67,8 @@ interface ContainersTabProps {
 
 interface ContainersTabState {
     showAddDialog: boolean;
+    showAddComposeDialog: boolean;
+    addCompose: string;
     logs: string[] | null;
     showDeleteDialog: ImageName; // image name
     showPruneDialog: boolean;
@@ -89,6 +91,7 @@ interface ContainersTabState {
 
 export default class ContainersTab extends Component<ContainersTabProps, ContainersTabState> {
     private lastAddImage: ContainerConfig | null = null;
+    private lastAddCompose = '';
 
     constructor(props: ContainersTabProps) {
         super(props);
@@ -96,6 +99,8 @@ export default class ContainersTab extends Component<ContainersTabProps, Contain
             logs: null,
             showAddDialog: false,
             showDeleteDialog: '',
+            addCompose: '',
+            showAddComposeDialog: false,
             addImage: null,
             requesting: false,
             showRecreateDialog: '',
@@ -195,6 +200,87 @@ export default class ContainersTab extends Component<ContainersTabProps, Contain
                     });
                 }}
             />
+        );
+    }
+
+    renderAddComposeDialog(): React.JSX.Element | null {
+        if (!this.state.showAddComposeDialog) {
+            return null;
+        }
+
+        return (
+            <Dialog
+                open={!0}
+                onClose={() => this.setState({ showAddComposeDialog: false })}
+                maxWidth="md"
+                fullWidth
+            >
+                <DialogTitle>{I18n.t('Add container via docker-compose')}</DialogTitle>
+                <DialogContent style={{ display: 'flex', gap: 20, flexDirection: 'column' }}>
+                    <Box>
+                        {I18n.t('Please enter the docker-compose.yml content here:')}
+                        <br />
+                        {I18n.t('You can create multiple containers at once.')}
+                    </Box>
+                    <TextField
+                        label="docker-compose.yml"
+                        variant="filled"
+                        multiline
+                        minRows={10}
+                        maxRows={30}
+                        value={this.state.addCompose}
+                        onChange={e => this.setState({ addCompose: e.target.value })}
+                        fullWidth
+                    />
+                </DialogContent>
+                <DialogActions>
+                    <Button
+                        variant="contained"
+                        color="primary"
+                        disabled={!this.state.addCompose || this.state.requesting}
+                        onClick={() => {
+                            this.lastAddCompose = this.state.addCompose;
+                            this.setState({ requesting: true }, async () => {
+                                try {
+                                    const result: { result: { stdout: string; stderr: string } } =
+                                        await this.props.socket.sendTo(
+                                            `docker-manager.${this.props.instance}`,
+                                            'container:create-compose',
+                                            {
+                                                compose: this.state.addCompose,
+                                            },
+                                        );
+                                    this.setState({
+                                        showAddComposeDialog: false,
+                                        addCompose: '',
+                                        requesting: false,
+                                        showHint: result?.result.stdout || '',
+                                        showError: result?.result.stderr || '',
+                                    });
+                                } catch (e) {
+                                    console.error(`Cannot create container via docker-compose: ${e}`);
+                                    alert(`Cannot create container via docker-compose: ${e}`);
+                                    this.setState({
+                                        requesting: false,
+                                        showError: `Cannot create container via docker-compose: ${e}`,
+                                    });
+                                }
+                            });
+                        }}
+                        startIcon={this.state.requesting ? <CircularProgress size={24} /> : <AddIcon />}
+                    >
+                        {I18n.t('Add')}
+                    </Button>
+                    <Button
+                        variant="contained"
+                        color="grey"
+                        onClick={() => this.setState({ showAddComposeDialog: false })}
+                        startIcon={<CloseIcon />}
+                    >
+                        {I18n.t('Cancel')}
+                    </Button>
+                </DialogActions>
+            </Dialog>
         );
     }
 
@@ -951,6 +1037,26 @@ export default class ContainersTab extends Component<ContainersTabProps, Contain
                                                             : '',
                                                     name: '',
                                                 },
+                                            })
+                                        }
+                                    >
+                                        <AddIcon />
+                                    </Fab>
+                                </Tooltip>
+                                <Tooltip
+                                    title={I18n.t('Add new docker compose project')}
+                                    slotProps={{ popper: { sx: { pointerEvents: 'none' } } }}
+                                >
+                                    <Fab
+                                        size="small"
+                                        color="secondary"
+                                        aria-label="add"
+                                        style={{ marginRight: 10 }}
+                                        disabled={!this.props.alive}
+                                        onClick={() =>
+                                            this.setState({
+                                                showAddComposeDialog: true,
+                                                addCompose: this.lastAddCompose || '',
                                             })
                                         }
                                     >

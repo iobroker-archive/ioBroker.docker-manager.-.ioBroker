@@ -294,6 +294,11 @@ export class DockerManagerAdapter extends Adapter {
                 this.sendTo(obj.from, obj.command, { result }, obj.callback);
                 break;
             }
+            case 'container:create-compose': {
+                const result = await this.#dockerMonitor?.containerCreateCompose(obj.message.compose);
+                this.sendTo(obj.from, obj.command, { result }, obj.callback);
+                break;
+            }
             case 'network:create': {
                 const result = await this.#dockerMonitor?.networkCreate(obj.message.name, obj.message.driver);
                 this.sendTo(obj.from, obj.command, { result }, obj.callback);
