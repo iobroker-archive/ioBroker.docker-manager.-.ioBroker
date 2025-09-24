@@ -270,6 +270,19 @@ function cleanContainerConfig(obj: ContainerConfig, mayChange?: boolean): Contai
     return obj;
 }
 
+function size2string(size: number): string {
+    if (size < 1024) {
+        return `${size} B`;
+    }
+    if (size < 1024 * 1024) {
+        return `${(size / 1024).toFixed(2)} KB`;
+    }
+    if (size < 1024 * 1024 * 1024) {
+        return `${(size / (1024 * 1024)).toFixed(2)} MB`;
+    }
+    return `${(size / (1024 * 1024 * 1024)).toFixed(2)} GB`;
+}
+
 export default class DockerManager {
     protected installed: boolean = false;
     protected dockerVersion: string = '';
@@ -408,7 +421,9 @@ export default class DockerManager {
                 pid: inspect.HostConfig.PidMode,
                 seccomp:
                     inspect.HostConfig.SecurityOpt?.find(opt => opt.startsWith('seccomp='))?.split('=')[1] ?? undefined,
-                apparmor: inspect.AppArmorProfile,
+                apparmor:
+                    inspect.HostConfig.SecurityOpt?.find(opt => opt.startsWith('apparmor='))?.split('=')[1] ??
+                    undefined,
                 groupAdd: inspect.HostConfig.GroupAdd ?? undefined,
                 noNewPrivileges: undefined, // Nicht direkt verfügbar
             },
@@ -575,7 +590,7 @@ export default class DockerManager {
      * @param container Container configuration
      */
     async #ensureActualConfiguration(container: ContainerConfig): Promise<void> {
-        if (container.name === true) {
+        if (!container.name) {
             throw new Error(`Container name must be a string, but got boolean true`);
         }
         // Check the configuration of the container
@@ -595,10 +610,11 @@ export default class DockerManager {
                 if (result.stderr) {
                     this.adapter.log.warn(`Cannot recreate own container ${container.name}: ${result.stderr}`);
                 }
+            } else {
+                this.adapter.log.debug(`Configuration of own container ${container.name} is up to date`);
             }
 
             // Check if container is running
-            this.adapter.log.debug(`Configuration of own container ${container.name} is up to date`);
             const status = await this.containerList(true);
             const containerInfo = status.find(it => it.names === container.name);
             if (containerInfo) {
@@ -622,6 +638,10 @@ export default class DockerManager {
         }
     }
 
+    getDefaultContainerName(): string {
+        return `iob_${this.adapter.namespace.replace(/[-.]/g, '_')}`;
+    }
+
     async #checkOwnContainers(): Promise<void> {
         if (!this.#ownContainers.length) {
             this.#waitAllCheckedResolve?.();
@@ -631,7 +651,7 @@ export default class DockerManager {
         let images = await this.imageList();
         let anyStartedOrRunning = false;
         const networkChecked: string[] = [];
-        const prefix = `iob_${this.adapter.namespace.replace(/[-.]/g, '_')}`;
+        const prefix = this.getDefaultContainerName();
         for (let c = 0; c < this.#ownContainers.length; c++) {
             const container = this.#ownContainers[c];
             if (container.iobEnabled !== false) {
@@ -641,9 +661,7 @@ export default class DockerManager {
                 if (container.labels?.iobroker !== this.adapter.namespace) {
                     container.labels = { ...container.labels, iobroker: this.adapter.namespace };
                 }
-                if (container.name === true) {
-                    container.name = prefix;
-                }
+                container.name ||= prefix;
 
                 // Name of the container, name of the network and name of the volume must start with iob_<Adaptername>_<instance>_
                 if (container.name !== prefix && !container.name.startsWith(`${prefix}_`)) {
@@ -813,7 +831,7 @@ export default class DockerManager {
         // Check the status of own containers
         for (let c = 0; c < this.#ownContainers.length; c++) {
             const container = this.#ownContainers[c];
-            if (container.iobEnabled !== false && container.iobMonitoringEnabled && container.name !== true) {
+            if (container.iobEnabled !== false && container.iobMonitoringEnabled && container.name) {
                 // Check if container is running
                 const running = containers.find(it => it.names === container.name);
                 if (!running || (running.status !== 'running' && running.status !== 'restarting')) {
@@ -1099,8 +1117,48 @@ export default class DockerManager {
                         .then(images => resolve({ stdout: `Image ${image} pulled`, stderr: '', images }))
                         .catch(reject);
                 };
-                const onProgress = (event: any): void => {
-                    this.adapter.log.debug(JSON.stringify(event));
+                const lastShownProgress: { [id: string]: number } = {};
+                const onProgress = (
+                    event:
+                        | {
+                              status: 'Downloading';
+                              progressDetail: { current: number; total: number };
+                              progress: string;
+                              id: string;
+                          }
+                        | {
+                              status: 'Download complete' | 'Verifying Checksum' | 'Pull complete';
+                              id: string;
+                          }
+                        | {
+                              status: 'Extracting';
+                              progressDetail: { current: number; total: number };
+                              progress: string;
+                              id: string;
+                          },
+                ): void => {
+                    // {"status":"Downloading","progressDetail":{"current":109494080,"total":689664036},"progress":"[=======> ]  109.5MB/689.7MB","id":"29bce3058cea"}
+                    // {"status":"Download complete","progressDetail":{},"id":"6859c690a072"}
+                    // {"status":"Verifying Checksum","progressDetail":{},"id":"6859c690a072"}
+                    // {"status":"Extracting","progressDetail":{"current":32,"total":32},"progress":"[======>] 32B/32B","id":"4f4fb700ef54"}
+                    // {"status":"Pull complete","progressDetail":{},"id":"4f4fb700ef54"}
+
+                    if (!lastShownProgress || Date.now() - lastShownProgress[event.id] > 4000) {
+                        if (
+                            event.status === 'Download complete' ||
+                            event.status === 'Pull complete' ||
+                            event.status === 'Verifying Checksum'
+                        ) {
+                            this.adapter.log.debug(`Image ${image}/${event.id}: ${event.status}`);
+                        } else if (event.status === 'Downloading' || event.status === 'Extracting') {
+                            this.adapter.log.debug(
+                                `Pulling image ${image}/${event.id}: ${event.status} ${Math.round((event.progressDetail.current / event.progressDetail.total) * 1000) / 10}% of ${size2string(event.progressDetail.total)}`,
+                            );
+                        } else {
+                            this.adapter.log.debug(`Pulling image ${image}/${event.id}: ${JSON.stringify(event)}`);
+                        }
+                        lastShownProgress[event.id] = Date.now();
+                    }
                 };
                 this.#dockerode!.modem.followProgress(stream, onFinished, onProgress);
             });
@@ -1244,7 +1302,7 @@ export default class DockerManager {
                 mounts.push(m);
             }
         }
-        if (config.name === true) {
+        if (!config.name) {
             throw new Error(`Container name must be a string, but got boolean true`);
         }
 
@@ -1326,8 +1384,8 @@ export default class DockerManager {
                     : undefined,
                 SecurityOpt: [
                     ...(config.security?.seccomp ? [`seccomp=${config.security.seccomp}`] : []),
-                    ...(config.security?.apparmor ? [config.security.apparmor] : []),
-                    ...(config.security?.noNewPrivileges ? ['no-new-privileges'] : []),
+                    ...(config.security?.apparmor ? [`apparmor=${config.security.apparmor}`] : []),
+                    ...(config.security?.noNewPrivileges ? ['no-new-privileges:true'] : []),
                 ],
                 Sysctls: config.sysctls,
                 Init: config.init,
@@ -1734,9 +1792,10 @@ export default class DockerManager {
      * @param timeoutSeconds Timeout in seconds to wait before killing the container (default: 5)
      */
     async containerRestart(
-        container: ContainerName,
+        container?: ContainerName,
         timeoutSeconds?: number,
     ): Promise<{ stdout: string; stderr: string }> {
+        container ||= this.getDefaultContainerName();
         if (this.#dockerode) {
             const containers = await this.containerList();
             // find ID of container
@@ -1760,6 +1819,21 @@ export default class DockerManager {
         } catch (e) {
             return { stdout: '', stderr: e.message.toString() };
         }
+    }
+
+    /** Find the IP address of a container, via which it can be reached from the host */
+    async getIpOfContainer(containerName?: ContainerName): Promise<string> {
+        containerName ||= this.getDefaultContainerName();
+        const data = await this.containerInspect(containerName);
+        if (!data?.NetworkSettings?.Networks) {
+            throw new Error(`No network settings found for container ${containerName}`);
+        }
+        for (const n in data.NetworkSettings.Networks) {
+            if (data.NetworkSettings.Networks[n].IPAddress) {
+                return data.NetworkSettings.Networks[n].IPAddress;
+            }
+        }
+        throw new Error(`No IP address found for container ${containerName}`);
     }
 
     /**
@@ -1951,8 +2025,9 @@ export default class DockerManager {
     }
 
     static dockerodeInspect2DockerContainerInspect(data: Docker.ContainerInspectInfo): DockerContainerInspect {
-        // todo
-        return data as unknown as DockerContainerInspect;
+        return {
+            ...(data as unknown as DockerContainerInspect),
+        };
     }
 
     /** Inspect a container */
@@ -2023,7 +2098,7 @@ export default class DockerManager {
         }
 
         // name
-        if (config.name && config.name !== true) {
+        if (config.name) {
             args.push('--name', config.name);
         }
 
@@ -2433,7 +2508,7 @@ export default class DockerManager {
         }
 
         for (const container of this.#ownContainers) {
-            if (container.iobEnabled !== false && container.iobStopOnUnload && container.name !== true) {
+            if (container.iobEnabled !== false && container.iobStopOnUnload && container.name) {
                 this.adapter.log.info(`Stopping own container ${container.name} on destroy`);
                 try {
                     await this.containerStop(container.name);

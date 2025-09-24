@@ -1,4 +1,11 @@
-import { HealthConfig } from 'dockerode';
+interface HealthConfig {
+    Test?: string[] | undefined;
+    Interval?: number | undefined;
+    Timeout?: number | undefined;
+    StartPeriod?: number | undefined;
+    StartInterval?: number | undefined;
+    Retries?: number | undefined;
+}
 
 export type ImageName = string;
 export type ContainerName = string;
@@ -494,7 +501,7 @@ export interface ContainerConfig {
     build?: BuildConfig;
 
     /** --name */
-    name: ContainerName | true;
+    name?: ContainerName;
 
     /** Command & Entrypoint */
     command?: string[] | string; // CMD override
