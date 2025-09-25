@@ -15,32 +15,6 @@
                 "pl": "Dodano zakładkę sieciową",
                 "uk": "Додано вкладку мережі",
                 "zh-cn": "添加了网络选项卡"
-            },
-            "0.0.3": {
-                "en": "Initial commit",
-                "de": "Erster Commit",
-                "ru": "Первоначальный коммит",
-                "pt": "Commit inicial",
-                "nl": "Eerste commit",
-                "fr": "Premier commit",
-                "it": "Commit iniziale",
-                "es": "Commit inicial",
-                "pl": "Pierwszy commit",
-                "uk": "Початковий коміт",
-                "zh-cn": "初始提交"
-            },
-            "0.0.2": {
-                "en": "Initial commit",
-                "de": "Ursprüngliche Verpflichtung",
-                "ru": "Первоначальное обязательство",
-                "pt": "Commit inicial",
-                "nl": "Eerste commit",
-                "fr": "Engagement initial",
-                "it": "Impegno iniziale",
-                "es": "Composición inicial",
-                "pl": "Początkowe zobowiązanie",
-                "uk": "Початкова комісія",
-                "zh-cn": "初步承诺"
             }
         },
         "titleLang": {
@@ -80,7 +54,19 @@
         "dataSource": "push",
         "adminTab": {
             "singleton": false,
-            "name": "Docker"
+            "name": {
+                "en": "Docker",
+                "de": "Docker",
+                "ru": "Docker",
+                "pt": "Docker",
+                "nl": "Docker",
+                "fr": "Docker",
+                "it": "Docker",
+                "es": "Docker",
+                "pl": "Docker",
+                "uk": "Docker",
+                "zh-cn": "Docker"
+            }
         },
         "adminUI": {
             "config": "materialize",
