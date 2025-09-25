@@ -16,7 +16,7 @@ import type {
     VolumeDriver,
     VolumeInfo,
 } from './dockerManager.types';
-import { inRange, isIP, isV4, isV6 } from 'range_check';
+import { inRange, isIP, isV6 } from 'range_check';
 import DockerManager from './DockerManager';
 import type { DockerManagerAdapter } from '../main';
 
