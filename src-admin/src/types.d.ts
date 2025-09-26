@@ -1,11 +1,4 @@
-import type {
-    DockerContainerInspect,
-    NetworkInfo,
-    DiskUsage,
-    ContainerInfo,
-    ImageInfo,
-    VolumeInfo,
-} from './dockerManager.types.ts';
+import type { DockerContainerInspect } from '@iobroker/plugin-docker';
 
 export type GUIRequestInfo = {
     type: 'info';
@@ -86,7 +79,10 @@ export type GUIResponse =
 
 export interface DockerManagerAdapterConfig extends ioBroker.AdapterConfig {
     dockerApi: boolean;
-    dockerApiProtocol: 'http' | 'https';
-    dockerApiHost: string;
-    dockerApiPort: number | string;
+    host?: string;
+    port?: number | string;
+    protocol?: 'http' | 'https';
+    ca?: string;
+    cert?: string;
+    key?: string;
 }

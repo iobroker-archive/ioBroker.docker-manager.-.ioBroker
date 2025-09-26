@@ -99,10 +99,12 @@
         ]
     },
     "native": {
-        "dockerApi": false,
-        "dockerApiProtocol": "http",
-        "dockerApiHost": "",
-        "dockerApiPort": 2375
+        "host": "",
+        "port": 2375,
+        "protocol": "http",
+        "ca": "",
+        "cert": "",
+        "key": ""
     },
     "objects": [],
     "instanceObjects": []

@@ -26,7 +26,7 @@ import type {
     NetworkInfo,
     PortBinding,
     Protocol,
-} from '../../dockerManager.types';
+} from '@iobroker/plugin-docker';
 import styles from './styles';
 
 export function validateConfig(
@@ -113,7 +113,7 @@ export default function NetworkTab(props: {
                     onChange={e =>
                         props.onChange({
                             ...props.config,
-                            image: e.target.value,
+                            image: e.target.value as string,
                         })
                     }
                 >

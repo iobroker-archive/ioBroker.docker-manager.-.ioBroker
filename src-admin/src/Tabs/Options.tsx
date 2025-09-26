@@ -50,8 +50,8 @@ export default class OptionsTab extends Component<OptionsTabProps, object> {
                                 <InputLabel>{I18n.t('Protocol')}</InputLabel>
                                 <Select
                                     variant="standard"
-                                    value={this.props.native.dockerApiProtocol || 'http'}
-                                    onChange={e => this.props.onChange('dockerApiProtocol', e.target.value)}
+                                    value={this.props.native.protocol || 'http'}
+                                    onChange={e => this.props.onChange('protocol', e.target.value)}
                                 >
                                     <MenuItem value="http">http</MenuItem>
                                     <MenuItem value="https">https</MenuItem>
@@ -65,8 +65,8 @@ export default class OptionsTab extends Component<OptionsTabProps, object> {
                                     marginRight: 10,
                                 }}
                                 variant="standard"
-                                value={this.props.native.dockerApiHost}
-                                onChange={e => this.props.onChange('dockerApiHost', e.target.value)}
+                                value={this.props.native.host}
+                                onChange={e => this.props.onChange('host', e.target.value)}
                                 helperText={I18n.t('Like 192.168.1.10')}
                             />
                             <TextField
@@ -84,8 +84,8 @@ export default class OptionsTab extends Component<OptionsTabProps, object> {
                                     },
                                 }}
                                 variant="standard"
-                                value={this.props.native.dockerApiPort}
-                                onChange={e => this.props.onChange('dockerApiPort', e.target.value)}
+                                value={this.props.native.port}
+                                onChange={e => this.props.onChange('port', e.target.value)}
                             />
                         </div>
                     ) : null}

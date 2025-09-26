@@ -1,4 +1,4 @@
-import type { DockerContainerInspect } from './lib/dockerManager.types.ts';
+import type { DockerContainerInspect } from '@iobroker/plugin-docker';
 
 export type GUIRequestInfo = {
     type: 'info';
@@ -76,3 +76,13 @@ export type GUIResponse =
     | GUIResponseNetworks
     | GUIResponseVolumes
     | { command: 'stopped' };
+
+export interface DockerManagerAdapterConfig extends ioBroker.AdapterConfig {
+    dockerApi: boolean;
+    host?: string;
+    port?: number | string;
+    protocol?: 'http' | 'https';
+    ca?: string;
+    cert?: string;
+    key?: string;
+}

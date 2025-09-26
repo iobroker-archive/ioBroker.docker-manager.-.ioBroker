@@ -1,11 +1,12 @@
 import { type AdapterOptions, Adapter } from '@iobroker/adapter-core';
-import type { DockerImageTagsResponse } from './lib/dockerManager.types';
-import type { GUIResponse } from './types';
+import type { DockerImageTagsResponse } from '@iobroker/plugin-docker';
+import type { DockerManagerAdapterConfig, GUIResponse } from './types';
 
 import DockerMonitor from './lib/DockerMonitor';
 import axios from 'axios';
 
 export class DockerManagerAdapter extends Adapter {
+    declare config: DockerManagerAdapterConfig;
     #dockerMonitor: DockerMonitor | undefined;
 
     #_guiSubscribes:

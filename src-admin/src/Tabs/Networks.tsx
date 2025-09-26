@@ -26,7 +26,7 @@ import {
 import { type AdminConnection, I18n, InfoBox } from '@iobroker/adapter-react-v5';
 import { Add as AddIcon, Delete as DeleteIcon, Warning as AlertIcon, Close as CloseIcon } from '@mui/icons-material';
 
-import type { NetworkInfo, NetworkDriver } from '../dockerManager.types';
+import type { NetworkInfo, NetworkDriver } from '@iobroker/plugin-docker';
 
 interface NetworksTabProps {
     socket: AdminConnection;

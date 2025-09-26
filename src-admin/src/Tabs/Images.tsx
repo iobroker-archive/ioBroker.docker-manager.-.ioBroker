@@ -34,7 +34,7 @@ import {
     Info as InfoIcon,
 } from '@mui/icons-material';
 
-import type { ContainerInfo, ImageInfo, DockerImageInspect, DockerImageTagsResponse } from '../dockerManager.types';
+import type { ContainerInfo, ImageInfo, DockerImageInspect, DockerImageTagsResponse } from '@iobroker/plugin-docker';
 import { size2string } from '../Components/utils';
 
 interface ImagesTabProps {

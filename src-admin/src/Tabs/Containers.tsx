@@ -42,8 +42,7 @@ import type {
     ImageInfo,
     ContainerConfig,
     NetworkInfo,
-    ImageName,
-} from '../dockerManager.types';
+} from '@iobroker/plugin-docker';
 import CreateContainerDialog from '../Components/CreateContainer';
 import { mapInspectToConfig } from '../Components/utils';
 
@@ -70,7 +69,7 @@ interface ContainersTabState {
     showAddComposeDialog: boolean;
     addCompose: string;
     logs: string[] | null;
-    showDeleteDialog: ImageName; // image name
+    showDeleteDialog: string; // image name
     showPruneDialog: boolean;
     addImage: ContainerConfig | null;
     requesting: boolean;

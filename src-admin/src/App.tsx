@@ -33,7 +33,7 @@ import type {
     ImageInfo,
     NetworkInfo,
     VolumeInfo,
-} from './dockerManager.types';
+} from '@iobroker/plugin-docker';
 import type { DockerManagerAdapterConfig, GUIResponse } from './types';
 
 const styles: { [styleName: string]: any } = {

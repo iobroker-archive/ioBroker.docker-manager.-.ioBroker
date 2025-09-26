@@ -7,17 +7,17 @@ import { networkInterfaces } from 'node:os';
 import { lookup } from 'node:dns/promises';
 import http from 'node:http';
 
-import type {
-    ContainerConfig,
-    ContainerInfo,
-    ImageInfo,
-    NetworkDriver,
-    NetworkInfo,
-    VolumeDriver,
-    VolumeInfo,
-} from './dockerManager.types';
+import {
+    type ContainerConfig,
+    type ContainerInfo,
+    type ImageInfo,
+    type NetworkDriver,
+    type NetworkInfo,
+    type VolumeDriver,
+    type VolumeInfo,
+    DockerManager,
+} from '@iobroker/plugin-docker';
 import { inRange, isIP, isV6 } from 'range_check';
-import DockerManager from './DockerManager';
 import type { DockerManagerAdapter } from '../main';
 
 export type ImageName = string;
@@ -102,16 +102,29 @@ export default class DockerMonitor extends DockerManager {
     constructor(
         adapter: DockerManagerAdapter,
         options?: {
-            dockerApi?: boolean;
-            dockerApiHost?: string;
-            dockerApiPort?: number | string;
-            dockerApiProtocol?: 'http' | 'https';
+            host?: string;
+            port?: number | string;
+            protocol?: 'http' | 'https';
+            ca?: string;
+            cert?: string;
+            key?: string;
         },
     ) {
-        if (options?.dockerApiHost === 'localhost') {
-            options.dockerApiHost = '127.0.0.1';
+        if (options?.host === 'localhost') {
+            options.host = '127.0.0.1';
         }
-        super(adapter, options);
+        super({
+            dockerApi: options,
+            logger: {
+                silly: (text: string) => adapter.log.silly(text),
+                debug: (text: string) => adapter.log.debug(text),
+                info: (text: string) => adapter.log.info(text),
+                warn: (text: string) => adapter.log.warn(text),
+                error: (text: string) => adapter.log.error(text),
+                level: adapter.log.level,
+            },
+            namespace: adapter.namespace,
+        });
         this.#adapter = adapter;
     }
 
@@ -314,30 +327,22 @@ export default class DockerMonitor extends DockerManager {
                             if (protocol === 'tcp') {
                                 let url = `http://${isV6(hostIp) ? `[${hostIp}]` : hostIp}:${hostPort}`;
                                 if (
-                                    this.options.dockerApi &&
+                                    this.dockerApi &&
                                     (hostIp === 'localhost' || hostIp === '127.0.0.1') &&
-                                    hostIp !== this.options.dockerApiHost
+                                    hostIp !== this.dockerApi.host
                                 ) {
                                     this.checkedURLs[url] = false;
                                     continue; // skip checking localhost ports if docker API is used
                                 }
-                                if (
-                                    this.options.dockerApi &&
-                                    this.options.dockerApiHost &&
-                                    !isIP(this.options.dockerApiHost)
-                                ) {
-                                    this.#domain2ip[this.options.dockerApiHost] ||= await getIpForDomain(
-                                        this.options.dockerApiHost,
-                                    );
+                                if (this.dockerApi?.host && !isIP(this.dockerApi.host)) {
+                                    this.#domain2ip[this.dockerApi.host] ||= await getIpForDomain(this.dockerApi.host);
                                 }
 
                                 if (hostIp === '::' || hostIp === '0.0.0.0') {
                                     // find the network interface IP that suits to hostIp
                                     for (const ownIp of browserIPs) {
-                                        if (this.options.dockerApi && this.options.dockerApiHost) {
-                                            const realIp =
-                                                this.#domain2ip[this.options.dockerApiHost] ||
-                                                this.options.dockerApiHost;
+                                        if (this.dockerApi?.host) {
+                                            const realIp = this.#domain2ip[this.dockerApi.host] || this.dockerApi.host;
                                             url = url
                                                 .replace('0.0.0.0', isV6(realIp) ? `[${realIp}]` : realIp)
                                                 .replace('[::]', isV6(realIp) ? `[${realIp}]` : realIp);
@@ -378,7 +383,7 @@ export default class DockerMonitor extends DockerManager {
 
             return containers;
         } catch (e) {
-            this.adapter.log.debug(`Cannot list containers: ${e.message}`);
+            this.log.debug(`Cannot list containers: ${e.message}`);
             return [];
         }
     }
@@ -406,7 +411,7 @@ export default class DockerMonitor extends DockerManager {
         const hasTTY = process.stdin.isTTY && process.stdout.isTTY;
         const args: string[] = ['exec'];
         if (!command) {
-            this.adapter.log.error('No command specified for exec');
+            this.log.error('No command specified for exec');
             return;
         }
 
@@ -419,10 +424,10 @@ export default class DockerMonitor extends DockerManager {
         let p: ChildProcessWithoutNullStreams;
         try {
             if (this.needSudo) {
-                this.adapter.log.debug(`Executing: sudo docker ${args.join(' ')}`);
+                this.log.debug(`Executing: sudo docker ${args.join(' ')}`);
                 p = spawn('sudo', ['docker', ...args], { stdio: ['pipe', 'pipe', 'pipe'] });
             } else {
-                this.adapter.log.debug(`Executing: docker ${args.join(' ')}`);
+                this.log.debug(`Executing: docker ${args.join(' ')}`);
                 p = spawn('docker', args, { stdio: ['pipe', 'pipe', 'pipe'] });
             }
         } catch (e) {
@@ -460,7 +465,7 @@ export default class DockerMonitor extends DockerManager {
         });
 
         p.on('close', code => {
-            this.adapter.log.debug(`Command finished with code ${code}`);
+            this.log.debug(`Command finished with code ${code}`);
             const killTimeout = this.#runningCommands[sid]?.killTimeout;
             if (killTimeout) {
                 clearTimeout(killTimeout);

@@ -17,7 +17,7 @@ import {
 import { Add as AddIcon, Delete as DeleteIcon } from '@mui/icons-material';
 import { I18n } from '@iobroker/adapter-react-v5';
 
-import type { ContainerConfig, ContainerInfo, ImageInfo, VolumeMount } from '../../dockerManager.types';
+import type { ContainerConfig, ContainerInfo, ImageInfo, VolumeMount } from '@iobroker/plugin-docker';
 import styles from './styles';
 
 export function validateConfig(
@@ -54,7 +54,7 @@ export function validateConfig(
             if (!mount.source) {
                 return I18n.t('Please enter a volume name for all volume mounts');
             }
-            if (!/^[/a-zA-Z0-9_.-]+$/.test(mount.source)) {
+            if (!/^[/a-zA-Z0-9_.-]+$/.test(mount.source as string)) {
                 return I18n.t('Volume names may only contain alphanumeric characters, "-", "_" and "."');
             }
         } else if (mount.type === 'tmpfs') {
@@ -64,7 +64,7 @@ export function validateConfig(
         } else if (mount.type === 'npipe') {
             if (mount.source) {
                 // Validate Windows pipe path
-                if (!/^\\\\\.\\pipe\\[a-zA-Z0-9_.-]+$/.test(mount.source)) {
+                if (!/^\\\\\.\\pipe\\[a-zA-Z0-9_.-]+$/.test(mount.source as string)) {
                     return I18n.t('Please enter a valid Windows pipe path for all npipe mounts');
                 }
             }

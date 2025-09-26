@@ -4,7 +4,7 @@ import { Add as AddIcon, Close as CloseIcon } from '@mui/icons-material';
 
 import { type AdminConnection, I18n, type IobTheme, type ThemeType } from '@iobroker/adapter-react-v5';
 
-import type { ContainerConfig, ContainerInfo, ImageInfo, NetworkInfo } from '../../dockerManager.types';
+import type { ContainerConfig, ContainerInfo, ImageInfo, NetworkInfo } from '@iobroker/plugin-docker';
 import MainTab, { validateConfig as validateConfigMain } from './MainTab';
 import NetworkTab, { validateConfig as validateConfigNetwork } from './NetworkTab';
 import VolumeTab, { validateConfig as validateConfigVolume } from './VolumeTab';

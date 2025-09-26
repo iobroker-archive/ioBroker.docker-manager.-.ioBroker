@@ -1,4 +1,4 @@
-import type { DockerContainerInspect, ContainerConfig } from '../dockerManager.types';
+import type { DockerContainerInspect, ContainerConfig } from '@iobroker/plugin-docker';
 
 export function size2string(size: number | undefined): string {
     if (size === undefined || size === null || isNaN(size)) {
