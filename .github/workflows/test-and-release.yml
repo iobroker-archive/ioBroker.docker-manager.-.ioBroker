@@ -89,9 +89,6 @@ jobs:
             - name: Install Base Dependencies
               run: npm i && cd src-admin && npm i
 
-            - name: Build typescript
-              run: npm run build
-
             - name: Run local tests
               run: npm test
 
