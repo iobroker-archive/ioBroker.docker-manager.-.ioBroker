@@ -92,7 +92,7 @@ The adapter could use the Docker API to communicate with the Docker daemon on ot
 
 ## Changelog
 
-### 0.1.0 (2025-09-17)
+### **WORK IN PROGRESS**
 
 - (@GermanBluefox) Added network tab
 
