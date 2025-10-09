@@ -1,8 +1,21 @@
 {
   "common": {
     "name": "docker-manager",
-    "version": "0.1.1",
+    "version": "0.1.2",
     "news": {
+      "0.1.2": {
+        "en": "Added volume browsing\nAdded text file read from volume",
+        "de": "Hinzufügen von Volume-Browsing\nTextdatei hinzugefügt, die von Volume gelesen wird",
+        "ru": "Добавлен объем просмотра\nДобавлен текстовый файл, прочитанный из тома",
+        "pt": "Navegação de volume adicionada\nArquivo de texto adicionado lido do volume",
+        "nl": "Volume browsen toegevoegd\nTekstbestand uit volume gelezen toegevoegd",
+        "fr": "Ajout de la navigation en volume\nAjout du fichier texte lu à partir du volume",
+        "it": "Aggiunto volume di navigazione\nAggiunto file di testo letto da volume",
+        "es": "Añadido volumen de navegación\nArchivo de texto añadido leído del volumen",
+        "pl": "Dodano przeglądanie objętości\nDodany plik tekstowy odczytywany z głośności",
+        "uk": "Додано перегляд об'єму\nДодано текстовий файл з об'єму",
+        "zh-cn": "添加卷浏览\n从音量中添加文本文件"
+      },
       "0.1.1": {
         "en": "Added network tab",
         "de": "Netzwerk-Tab hinzugefügt",

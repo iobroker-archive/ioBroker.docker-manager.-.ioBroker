@@ -91,7 +91,7 @@ The adapter could use the Docker API to communicate with the Docker daemon on ot
 -->
 
 ## Changelog
-### **WORK IN PROGRESS**
+### 0.1.2 (2025-10-09)
 
 - (@GermanBluefox) Added volume browsing
 - (@GermanBluefox) Added text file read from volume
