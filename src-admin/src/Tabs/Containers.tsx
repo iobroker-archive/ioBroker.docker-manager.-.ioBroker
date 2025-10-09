@@ -66,6 +66,7 @@ interface ContainersTabProps {
 
 interface ContainersTabState {
     showAddDialog: boolean;
+    requestingInspect: string;
     showAddComposeDialog: boolean;
     addCompose: string;
     logs: string[] | null;
@@ -102,6 +103,7 @@ export default class ContainersTab extends Component<ContainersTabProps, Contain
             showAddComposeDialog: false,
             addImage: null,
             requesting: false,
+            requestingInspect: '',
             showRecreateDialog: '',
             showStopDialog: '',
             showRestartDialog: '',
@@ -119,6 +121,10 @@ export default class ContainersTab extends Component<ContainersTabProps, Contain
 
     componentDidMount(): void {
         this.props.onExecuteCommand(this.state.showExecDialog, this.state.execCommand, null);
+    }
+
+    async setStateAsync(state: Partial<ContainersTabState>): Promise<void> {
+        return new Promise(resolve => this.setState(state as ContainersTabState, () => resolve()));
     }
 
     async triggerRecreateDialog(id: string): Promise<void> {
@@ -990,6 +996,7 @@ export default class ContainersTab extends Component<ContainersTabProps, Contain
         return (
             <Paper style={{ width: 'calc(100% - 8px)', height: 'calc(100% - 8px)', padding: 4 }}>
                 {this.renderAddDialog()}
+                {this.renderAddComposeDialog()}
                 {this.renderConfirmDeleteDialog()}
                 {this.renderConfirmPruneDialog()}
                 {this.renderConfirmRestartDialog()}
@@ -1189,7 +1196,9 @@ export default class ContainersTab extends Component<ContainersTabProps, Contain
                                     <IconButton
                                         size="small"
                                         title={I18n.t('Logs')}
-                                        disabled={!this.props.alive}
+                                        disabled={
+                                            !this.props.alive || this.state.requesting || !!this.state.requestingInspect
+                                        }
                                         onClick={async () => {
                                             try {
                                                 const result: { result: string[] | null } =
@@ -1216,7 +1225,12 @@ export default class ContainersTab extends Component<ContainersTabProps, Contain
                                     <IconButton
                                         size="small"
                                         title={I18n.t('Execute command in container')}
-                                        disabled={!this.props.alive || container.status !== 'running'}
+                                        disabled={
+                                            !this.props.alive ||
+                                            container.status !== 'running' ||
+                                            this.state.requesting ||
+                                            !!this.state.requestingInspect
+                                        }
                                         onClick={() =>
                                             this.setState({
                                                 showExecDialog: container.id,
@@ -1229,9 +1243,12 @@ export default class ContainersTab extends Component<ContainersTabProps, Contain
                                     <IconButton
                                         size="small"
                                         title={I18n.t('Information about container')}
-                                        disabled={!this.props.alive}
+                                        disabled={
+                                            !this.props.alive || this.state.requesting || !!this.state.requestingInspect
+                                        }
                                         onClick={async () => {
                                             try {
+                                                await this.setStateAsync({ requestingInspect: container.id });
                                                 const result: { result: DockerContainerInspect | null } =
                                                     await this.props.socket.sendTo(
                                                         `docker-manager.${this.props.instance}`,
@@ -1242,6 +1259,7 @@ export default class ContainersTab extends Component<ContainersTabProps, Contain
                                                     );
                                                 this.setState({
                                                     showAddDialog: false,
+                                                    requestingInspect: '',
                                                     dockerInspect: result?.result,
                                                     showError: !result?.result
                                                         ? 'Cannot get information for container'
@@ -1255,7 +1273,11 @@ export default class ContainersTab extends Component<ContainersTabProps, Contain
                                             }
                                         }}
                                     >
-                                        <InfoIcon />
+                                        {this.state.requestingInspect === container.id ? (
+                                            <CircularProgress size={18} />
+                                        ) : (
+                                            <InfoIcon />
+                                        )}
                                     </IconButton>
                                     <IconButton
                                         size="small"

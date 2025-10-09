@@ -1,14 +1,14 @@
-![Logo](admin/matter.svg)
+![Logo](admin/docker-manager.svg)
 
 # ioBroker Docker manager Adapter
 
-![Number of Installations](http://iobroker.live/badges/matter-installed.svg)
-![Number of Installations](http://iobroker.live/badges/matter-stable.svg)
-[![NPM version](http://img.shields.io/npm/v/iobroker.matter.svg)](https://www.npmjs.com/package/iobroker.matter)
+![Number of Installations](http://iobroker.live/badges/docker-manager-installed.svg)
+![Number of Installations](http://iobroker.live/badges/docker-manager-stable.svg)
+[![NPM version](http://img.shields.io/npm/v/iobroker.docker-manager.svg)](https://www.npmjs.com/package/iobroker.docker-manager)
 
-![Test and Release](https://github.com/ioBroker/ioBroker.matter/workflows/Test%20and%20Release/badge.svg)
-[![Translation status](https://weblate.iobroker.net/widgets/adapters/-/matter/svg-badge.svg)](https://weblate.iobroker.net/engage/adapters/?utm_source=widget)
-[![Downloads](https://img.shields.io/npm/dm/iobroker.matter.svg)](https://www.npmjs.com/package/iobroker.matter)
+![Test and Release](https://github.com/ioBroker/ioBroker.docker-manager/workflows/Test%20and%20Release/badge.svg)
+[![Translation status](https://weblate.iobroker.net/widgets/adapters/-/docker-manager/svg-badge.svg)](https://weblate.iobroker.net/engage/adapters/?utm_source=widget)
+[![Downloads](https://img.shields.io/npm/dm/iobroker.docker-manager.svg)](https://www.npmjs.com/package/iobroker.docker-manager)
 
 **This adapter uses Sentry libraries to automatically report exceptions and code errors to the developers.**
 For more details and for information how to disable the error reporting, see [Sentry-Plugin Documentation](https://github.com/ioBroker/plugin-sentry#plugin-sentry)!
@@ -91,6 +91,11 @@ The adapter could use the Docker API to communicate with the Docker daemon on ot
 -->
 
 ## Changelog
+### **WORK IN PROGRESS**
+
+- (@GermanBluefox) Added volume browsing
+- (@GermanBluefox) Added text file read from volume
+
 ### 0.1.1 (2025-09-26)
 
 - (@GermanBluefox) Added network tab

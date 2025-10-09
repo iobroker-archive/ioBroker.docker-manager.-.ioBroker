@@ -27,6 +27,7 @@ import { type AdminConnection, I18n, InfoBox } from '@iobroker/adapter-react-v5'
 import { Add as AddIcon, Delete as DeleteIcon, Warning as AlertIcon, Close as CloseIcon } from '@mui/icons-material';
 
 import type { VolumeInfo, NetworkDriver } from '@iobroker/plugin-docker';
+import VolumeBrowser from '../Components/VolumeBrowser';
 
 interface VolumesTabProps {
     socket: AdminConnection;
@@ -46,6 +47,7 @@ interface VolumesTabState {
     requesting: boolean;
     showHint: string;
     showError: string;
+    browseVolume: string;
 }
 
 export default class VolumesTab extends Component<VolumesTabProps, VolumesTabState> {
@@ -60,8 +62,24 @@ export default class VolumesTab extends Component<VolumesTabProps, VolumesTabSta
             requesting: false,
             showHint: '',
             showError: '',
+            browseVolume: '',
             showPruneDialog: false,
         };
+    }
+
+    renderBrowseDialog(): React.JSX.Element | null {
+        if (!this.state.browseVolume) {
+            return null;
+        }
+        return (
+            <VolumeBrowser
+                socket={this.props.socket}
+                instance={this.props.instance}
+                volumeId={this.state.browseVolume}
+                onClose={() => this.setState({ browseVolume: '' })}
+                alive={this.props.alive}
+            />
+        );
     }
 
     renderAddDialog(): React.JSX.Element | null {
@@ -373,6 +391,7 @@ export default class VolumesTab extends Component<VolumesTabProps, VolumesTabSta
                 {this.renderErrorDialog()}
                 {this.renderSnackbar()}
                 {this.renderConfirmPruneDialog()}
+                {this.renderBrowseDialog()}
                 <InfoBox
                     type="info"
                     closeable
@@ -428,7 +447,12 @@ export default class VolumesTab extends Component<VolumesTabProps, VolumesTabSta
                     <TableBody>
                         {this.props.volumes?.map(volume => (
                             <TableRow key={volume.name}>
-                                <TableCell style={{ fontWeight: 'bold' }}>{volume.name}</TableCell>
+                                <TableCell
+                                    style={{ fontWeight: 'bold', cursor: 'pointer', textDecoration: 'underline' }}
+                                    onClick={() => this.setState({ browseVolume: volume.name })}
+                                >
+                                    {volume.name}
+                                </TableCell>
                                 <TableCell>{volume.driver || '--'}</TableCell>
                                 <TableCell>{volume.volume}</TableCell>
                                 <TableCell style={{ textAlign: 'right' }}>

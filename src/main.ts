@@ -179,7 +179,6 @@ export class DockerManagerAdapter extends Adapter {
     };
 
     async #onReady(): Promise<void> {
-        this.log.info(`Adapter matter-controller started`);
         this.#dockerMonitor = new DockerMonitor(this, this.config);
         await this.#dockerMonitor.isReady();
         this.#_guiSubscribes = [];
@@ -332,6 +331,29 @@ export class DockerManagerAdapter extends Adapter {
             case 'volume:prune': {
                 const result = await this.#dockerMonitor?.volumePrune();
                 this.sendTo(obj.from, obj.command, { result }, obj.callback);
+                break;
+            }
+            case 'volume:file': {
+                try {
+                    const result = await this.#dockerMonitor?.volumeFile(obj.message.id, obj.message.file);
+                    this.sendTo(obj.from, obj.command, { result }, obj.callback);
+                } catch (e) {
+                    this.sendTo(obj.from, obj.command, { error: (e as Error).message }, obj.callback);
+                }
+                break;
+            }
+            case 'volume:dir': {
+                try {
+                    const result = await this.#dockerMonitor?.volumeDir(obj.message.id, obj.message.path);
+                    this.sendTo(
+                        obj.from,
+                        obj.command,
+                        Array.isArray(result) ? { result } : { error: result },
+                        obj.callback,
+                    );
+                } catch (e) {
+                    this.sendTo(obj.from, obj.command, { error: (e as Error).message }, obj.callback);
+                }
                 break;
             }
 
