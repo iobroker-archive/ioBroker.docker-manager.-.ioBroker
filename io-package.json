@@ -1,8 +1,21 @@
 {
   "common": {
     "name": "docker-manager",
-    "version": "0.1.2",
+    "version": "0.1.3",
     "news": {
+      "0.1.3": {
+        "en": "Updated packages",
+        "de": "Aktualisierte Pakete",
+        "ru": "Обновленные пакеты",
+        "pt": "Pacotes atualizados",
+        "nl": "Bijgewerkte pakketten",
+        "fr": "Paquets mis à jour",
+        "it": "Pacchetti aggiornati",
+        "es": "Paquetes actualizados",
+        "pl": "Aktualizacja pakietów",
+        "uk": "Оновлені пакети",
+        "zh-cn": "更新软件包"
+      },
       "0.1.2": {
         "en": "Added volume browsing\nAdded text file read from volume",
         "de": "Hinzufügen von Volume-Browsing\nTextdatei hinzugefügt, die von Volume gelesen wird",
