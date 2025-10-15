@@ -113,6 +113,11 @@
       {
         "js-controller": ">=6.0.11"
       }
+    ],
+    "globalDependencies": [
+      {
+        "admin": ">=7.0.25"
+      }
     ]
   },
   "native": {
