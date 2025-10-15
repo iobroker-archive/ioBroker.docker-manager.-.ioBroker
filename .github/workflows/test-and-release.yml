@@ -180,13 +180,13 @@ jobs:
                   prerelease: ${{ contains(steps.version.outputs.result, '-') }}
                   body: ${{ steps.extract_release.outputs.BODY }}
 
-#            - name: Notify Sentry.io about the release
-#              run: |
-#                  npm i -g @sentry/cli
-#                  export SENTRY_AUTH_TOKEN=${{ secrets.SENTRY_AUTH_TOKEN }}
-#                  export SENTRY_URL=https://sentry.iobroker.net
-#                  export SENTRY_ORG=iobroker
-#                  export SENTRY_PROJECT=iobroker-docker-manager
-#                  export SENTRY_VERSION=iobroker.docker-manager@${{ steps.version.outputs.result }}
-#                  sentry-cli releases new $SENTRY_VERSION
-#                  sentry-cli releases finalize $SENTRY_VERSION
+            - name: Notify Sentry.io about the release
+              run: |
+                  npm i -g @sentry/cli
+                  export SENTRY_AUTH_TOKEN=${{ secrets.SENTRY_AUTH_TOKEN }}
+                  export SENTRY_URL=https://sentry.iobroker.net
+                  export SENTRY_ORG=iobroker
+                  export SENTRY_PROJECT=iobroker-docker-manager
+                  export SENTRY_VERSION=iobroker.docker-manager@${{ steps.version.outputs.result }}
+                  sentry-cli releases new $SENTRY_VERSION
+                  sentry-cli releases finalize $SENTRY_VERSION
