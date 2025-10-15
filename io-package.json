@@ -16,19 +16,6 @@
         "uk": "Додано перегляд об'єму\nДодано текстовий файл з об'єму",
         "zh-cn": "添加卷浏览\n从音量中添加文本文件"
       },
-      "0.1.1": {
-        "en": "Added network tab",
-        "de": "Netzwerk-Tab hinzugefügt",
-        "ru": "Добавлена сетевая вкладка",
-        "pt": "Página de rede adicionada",
-        "nl": "Netwerktabblad toegevoegd",
-        "fr": "Ajout de l'onglet réseau",
-        "it": "Scheda di rete aggiuntiva",
-        "es": "Pestaña de red",
-        "pl": "Dodano kartę sieciową",
-        "uk": "Додано вкладку мережі",
-        "zh-cn": "添加网络标签"
-      },
       "0.1.0": {
         "en": "Added network tab",
         "de": "Hinzufügen des Netzwerk-Tabellenreiters",

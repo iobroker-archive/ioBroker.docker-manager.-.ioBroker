@@ -22,7 +22,7 @@
   },
   "dependencies": {
     "@iobroker/adapter-core": "^3.3.2",
-    "@iobroker/plugin-docker": "^0.1.4",
+    "@iobroker/plugin-docker": "^0.1.5",
     "axios": "^1.12.2",
     "dockerode": "^4.0.9",
     "range_check": "^4.1.0"
@@ -37,7 +37,7 @@
     "@iobroker/testing": "^5.1.1",
     "@iobroker/types": "^7.0.7",
     "@types/dockerode": "^3.3.44",
-    "@types/node": "^24.7.0",
+    "@types/node": "^24.7.2",
     "@types/tar-fs": "^2.0.4",
     "typescript": "~5.9.3"
   },
